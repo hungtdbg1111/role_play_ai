@@ -1,24 +1,44 @@
 
+
 import React, { useState, useRef, useEffect, ChangeEvent, useCallback } from 'react';
-import { KnowledgeBase, GameMessage, AiChoice, PlayerStats, Item, Skill, Quest, NPC, GameLocation, WorldLoreEntry, Companion, QuestObjective, FirebaseUser, PlayerActionInputType, ResponseLength } from '../types';
+import { KnowledgeBase, GameMessage, AiChoice, PlayerStats, Item, Skill, Quest, NPC, GameLocation, WorldLoreEntry, Companion, QuestObjective, FirebaseUser, PlayerActionInputType, ResponseLength, StorageType, StyleSettings, StyleSettingProperty } from '../types';
 import Button from './ui/Button';
 import Spinner from './ui/Spinner';
 import Modal from './ui/Modal';
 import KeywordSpan from './ui/KeywordSpan';
 import MiniInfoPopover from './ui/MiniInfoPopover';
-import { VIETNAMESE } from '../constants';
+import StyleSettingsModal from './StyleSettingsModal'; // New Import
+import { VIETNAMESE, TURNS_PER_PAGE, DEFAULT_STYLE_SETTINGS } from '../constants';
+import * as GameTemplates from '../templates'; // Import for type assertions
 
 // --- Define GameplayScreenProps interface ---
 interface GameplayScreenProps {
   knowledgeBase: KnowledgeBase;
-  gameMessages: GameMessage[];
-  isLoading: boolean;
+  gameMessages: GameMessage[]; // This is the FULL list of messages
+  isLoading: boolean; // Loading AI response for current action
   onPlayerAction: (action: string, isChoice: boolean, inputType: PlayerActionInputType, responseLength: ResponseLength) => void;
   onQuit: () => void;
-  rawAiResponsesLog: string[];
-  firebaseUser: FirebaseUser | null; // For enabling/disabling save
-  onSaveGame: () => Promise<void>; // Function to trigger game save
-  isSavingGame: boolean; // To show loading state on save button
+  rawAiResponsesLog: string[]; 
+  sentPromptsLog: string[]; 
+  firebaseUser: FirebaseUser | null; 
+  onSaveGame: () => Promise<void>; 
+  isSavingGame: boolean; 
+  storageType: StorageType;
+  // Pagination Props
+  currentPageDisplay: number;
+  setCurrentPageDisplay: (page: number) => void; // For jump to page
+  totalPages: number;
+  onGoToNextPage: () => void;
+  onGoToPrevPage: () => void;
+  onJumpToPage: (page: number) => void;
+  isSummarizing: boolean; // True if summarizing for page end OR loading game with missing summaries
+  getMessagesForPage: (pageNumber: number) => GameMessage[];
+  isCurrentlyActivePage: boolean; // True if current page is the latest page
+  onRollbackTurn: () => void; 
+  isAutoPlaying: boolean; 
+  onToggleAutoPlay: () => void; 
+  styleSettings: StyleSettings; // New prop
+  onUpdateStyleSettings: (newSettings: StyleSettings) => void; // New prop
 }
 
 // --- Helper function to escape regex characters ---
@@ -207,59 +227,80 @@ const WorldInfoList = <T extends {id: string, name: string} | {id: string, title
 
 // --- Debug Panel ---
 interface DebugPanelDisplayProps {
-  kb: KnowledgeBase;
-  rawAiResponsesLog: string[];
+  kb: KnowledgeBase; 
+  sentPromptsLog: string[];
+  rawAiResponsesLog: string[]; 
+  currentPageDisplay: number;
+  totalPages: number;
+  isAutoPlaying: boolean;
+  onToggleAutoPlay: () => void;
 }
-const DebugPanelDisplay: React.FC<DebugPanelDisplayProps> = ({ kb, rawAiResponsesLog }) => {
-  const renderKbList = (title: string, items: any[], nameKey: string = 'name', idKey: string = 'id') => {
-    return (
-      <div className="mb-3">
-        <h5 className="text-md font-semibold text-yellow-300 mb-1">{title} ({items.length})</h5>
-        {items.length === 0 ? (
-          <p className="text-xs italic text-gray-500">Trống.</p>
-        ) : (
-          <ul className="list-disc list-inside pl-2 space-y-0.5 max-h-32 overflow-y-auto custom-scrollbar text-xs">
-            {items.map(item => (
-              <li key={item[idKey] || item[nameKey]} className="text-gray-300">
-                {item[nameKey]}
-                {item.title && ` (${item.title})`}
-                {item.status && ` (Status: ${item.status})`}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    );
-  };
+const DebugPanelDisplay: React.FC<DebugPanelDisplayProps> = ({ 
+    kb, 
+    sentPromptsLog, 
+    rawAiResponsesLog, 
+    currentPageDisplay, 
+    totalPages,
+    isAutoPlaying,
+    onToggleAutoPlay
+}) => {
 
   return (
     <div className="fixed bottom-4 right-4 bg-gray-900 border-2 border-yellow-500 p-3 rounded-lg shadow-2xl max-w-md max-h-[calc(100vh-100px)] overflow-y-auto custom-scrollbar z-50">
       <h4 className="text-lg font-bold text-yellow-400 mb-3 border-b border-yellow-600 pb-2">Bảng Điều Khiển Debug</h4>
       
+      <div className="mb-3 text-xs text-gray-400">
+        Player: C{kb.playerStats.level} ({kb.playerStats.realm}), Lượt: {kb.playerStats.turn}<br/>
+        Trang: {currentPageDisplay}/{totalPages}, Lượt tóm tắt cuối: {kb.lastSummarizedTurn || 'Chưa có'}<br/>
+        Lịch sử trang (bắt đầu từ lượt): {JSON.stringify(kb.currentPageHistory)}<br/>
+        Tóm tắt có sẵn cho trang: {kb.pageSummaries ? Object.keys(kb.pageSummaries).join(', ') : 'Không có'}<br/>
+        Lịch sử lùi lượt: {kb.turnHistory ? kb.turnHistory.length : 0} mục
+      </div>
+
+       <Button
+        variant={isAutoPlaying ? "danger" : "secondary"}
+        size="sm"
+        onClick={onToggleAutoPlay}
+        className="w-full mb-3 border-orange-500 text-orange-300 hover:bg-orange-700 hover:text-white"
+      >
+        {isAutoPlaying ? VIETNAMESE.stopAutoPlayButton : VIETNAMESE.autoPlayButton}
+      </Button>
+
       <div className="mb-4">
-        <h5 className="text-lg font-semibold text-amber-300 mb-2">Knowledge Base Inspector</h5>
-        {renderKbList("Vật phẩm (Inventory)", kb.inventory, 'name')}
-        {renderKbList("Kỹ năng (Player Skills)", kb.playerSkills, 'name')}
-        {renderKbList("Nhiệm vụ (All Quests)", kb.allQuests, 'title')}
-        {renderKbList("NPC đã gặp (Discovered NPCs)", kb.discoveredNPCs, 'name')}
-        {renderKbList("Địa điểm đã biết (Discovered Locations)", kb.discoveredLocations, 'name')}
-        {renderKbList("Tri thức Thế giới (World Lore)", kb.worldLore, 'title')}
-        {renderKbList("Bạn đồng hành (Companions)", kb.companions, 'name')}
-        <div className="mt-2 text-xs text-gray-500">
-          Player Level: {kb.playerStats.level}, Realm: {kb.playerStats.realm}, Turn: {kb.playerStats.turn}
-        </div>
+        <h5 className="text-md font-semibold text-sky-300 mb-1">Nhật Ký Prompt Đã Gửi (10 gần nhất)</h5>
+        {sentPromptsLog.length === 0 ? (
+          <p className="text-xs italic text-gray-500">Chưa có prompt nào được gửi.</p>
+        ) : (
+          <div className="space-y-1 max-h-40 overflow-y-auto custom-scrollbar text-xs">
+            {sentPromptsLog.map((promptEntry, index) => (
+              <details key={`sent-${index}`} className="bg-gray-800 rounded group">
+                <summary className="p-1.5 text-sky-200 cursor-pointer text-[11px] group-open:font-semibold">
+                  Prompt #{sentPromptsLog.length - index} (Nhấn để xem)
+                </summary>
+                <pre className="p-1.5 bg-gray-850 text-sky-100 whitespace-pre-wrap break-all text-[10px] leading-relaxed max-h-80 overflow-y-auto custom-scrollbar">
+                  {promptEntry}
+                </pre>
+              </details>
+            ))}
+          </div>
+        )}
       </div>
 
       <div>
-        <h5 className="text-lg font-semibold text-sky-300 mb-2">AI Communication Log (Last 50)</h5>
+        <h5 className="text-md font-semibold text-lime-300 mb-1">Nhật Ký Phản Hồi Từ AI (50 gần nhất)</h5>
         {rawAiResponsesLog.length === 0 ? (
-          <p className="text-xs italic text-gray-500">Chưa có log rå AI nào.</p>
+          <p className="text-xs italic text-gray-500">Chưa có phản hồi nào từ AI.</p>
         ) : (
-          <div className="space-y-1 max-h-60 overflow-y-auto custom-scrollbar text-xs">
-            {rawAiResponsesLog.map((logEntry, index) => (
-              <pre key={index} className="p-1.5 bg-gray-800 rounded text-sky-200 whitespace-pre-wrap break-all text-[10px] leading-relaxed">
-                {logEntry}
-              </pre>
+          <div className="space-y-1 max-h-40 overflow-y-auto custom-scrollbar text-xs">
+            {rawAiResponsesLog.map((responseEntry, index) => (
+               <details key={`raw-${index}`} className="bg-gray-800 rounded group">
+                <summary className="p-1.5 text-lime-200 cursor-pointer text-[11px] group-open:font-semibold">
+                  Phản hồi AI #{rawAiResponsesLog.length - index} (Nhấn để xem)
+                </summary>
+                <pre className="p-1.5 bg-gray-850 text-lime-100 whitespace-pre-wrap break-all text-[10px] leading-relaxed max-h-80 overflow-y-auto custom-scrollbar">
+                  {responseEntry}
+                </pre>
+              </details>
             ))}
           </div>
         )}
@@ -268,18 +309,94 @@ const DebugPanelDisplay: React.FC<DebugPanelDisplayProps> = ({ kb, rawAiResponse
   );
 };
 
+// --- Pagination Controls Component ---
+interface PaginationControlsProps {
+  currentPage: number;
+  totalPages: number;
+  onPrev: () => void;
+  onNext: () => void;
+  onJump: (page: number) => void;
+  isSummarizing: boolean; // General summarizing state
+}
+
+const PaginationControls: React.FC<PaginationControlsProps> = ({ currentPage, totalPages, onPrev, onNext, onJump, isSummarizing }) => {
+  const [jumpToPageInput, setJumpToPageInput] = useState<string>(currentPage.toString());
+
+  useEffect(() => {
+    setJumpToPageInput(currentPage.toString());
+  }, [currentPage]);
+
+  const handleJumpInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setJumpToPageInput(e.target.value);
+  };
+
+  const handleJumpSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const pageNum = parseInt(jumpToPageInput, 10);
+    if (!isNaN(pageNum)) {
+      onJump(pageNum);
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-between p-2 bg-gray-700 border-t border-gray-600 rounded-b-lg mt-auto flex-shrink-0">
+      <Button onClick={onPrev} disabled={currentPage <= 1 || isSummarizing} size="sm" variant="ghost">
+        {VIETNAMESE.previousPage}
+      </Button>
+      <div className="flex items-center space-x-2">
+        <form onSubmit={handleJumpSubmit} className="flex items-center">
+          <input
+            type="number"
+            value={jumpToPageInput}
+            onChange={handleJumpInputChange}
+            min="1"
+            max={totalPages}
+            className="w-16 p-1.5 text-sm text-center bg-gray-800 border border-gray-600 rounded-md focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 text-gray-100"
+            aria-label="Nhập số trang"
+            disabled={isSummarizing}
+          />
+          <Button type="submit" size="sm" variant="ghost" className="ml-1 px-2" disabled={isSummarizing}>
+            {VIETNAMESE.goToPage}
+          </Button>
+        </form>
+        <span className="text-sm text-gray-300">
+          {VIETNAMESE.pageIndicator(currentPage, totalPages)}
+        </span>
+      </div>
+      <Button onClick={onNext} disabled={currentPage >= totalPages || isSummarizing} size="sm" variant="ghost">
+        {VIETNAMESE.nextPage}
+      </Button>
+    </div>
+  );
+};
+
 
 // --- Main Gameplay Screen Component ---
 const GameplayScreen: React.FC<GameplayScreenProps> = ({ 
     knowledgeBase, 
-    gameMessages, 
+    gameMessages: allGameMessages, 
     isLoading, 
     onPlayerAction, 
     onQuit, 
-    rawAiResponsesLog,
+    rawAiResponsesLog, 
+    sentPromptsLog,    
     firebaseUser,
     onSaveGame,
-    isSavingGame
+    isSavingGame,
+    storageType,
+    currentPageDisplay,
+    totalPages,
+    onGoToNextPage,
+    onGoToPrevPage,
+    onJumpToPage,
+    isSummarizing, 
+    getMessagesForPage,
+    isCurrentlyActivePage,
+    onRollbackTurn,
+    isAutoPlaying,
+    onToggleAutoPlay,
+    styleSettings,
+    onUpdateStyleSettings,
 }) => {
   const [playerInput, setPlayerInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -288,6 +405,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
   const [isQuestsPanelOpen, setIsQuestsPanelOpen] = useState(false);
   const [isWorldPanelOpen, setIsWorldPanelOpen] = useState(false);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
+  const [isStyleSettingsModalOpen, setIsStyleSettingsModalOpen] = useState(false); // New state for style settings modal
   
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
@@ -313,14 +431,14 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
     entityType: 'item' | 'skill' | 'quest' | 'npc' | 'location' | 'lore' | 'companion' | null;
   }>({ isOpen: false, targetRect: null, entity: null, entityType: null });
 
+  const displayedMessages = getMessagesForPage(currentPageDisplay);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  useEffect(scrollToBottom, [gameMessages]);
+  useEffect(scrollToBottom, [displayedMessages]); 
 
-  // Close dropdowns on click outside or ESC
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (actionTypeDropdownRef.current && !actionTypeDropdownRef.current.contains(event.target as Node)) {
@@ -334,10 +452,11 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
       if (event.key === 'Escape') {
         setIsActionTypeDropdownOpen(false);
         setIsResponseLengthDropdownOpen(false);
+        setIsStyleSettingsModalOpen(false); // Close style settings modal on Esc
       }
     };
 
-    if (isActionTypeDropdownOpen || isResponseLengthDropdownOpen) {
+    if (isActionTypeDropdownOpen || isResponseLengthDropdownOpen || isStyleSettingsModalOpen) {
       document.addEventListener('mousedown', handleClickOutside);
       document.addEventListener('keydown', handleEscKey);
     }
@@ -345,7 +464,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleEscKey);
     };
-  }, [isActionTypeDropdownOpen, isResponseLengthDropdownOpen]);
+  }, [isActionTypeDropdownOpen, isResponseLengthDropdownOpen, isStyleSettingsModalOpen]);
 
   const handleInputChange = (e: ChangeEvent<HTMLInputElement>) => {
     setPlayerInput(e.target.value);
@@ -368,20 +487,33 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
 
   const handleSubmitAction = (e: React.FormEvent) => {
     e.preventDefault();
-    if (playerInput.trim() && !isLoading) {
+    if (playerInput.trim() && !isLoading && !isSummarizing && isCurrentlyActivePage) {
       onPlayerAction(playerInput.trim(), false, currentActionType, selectedResponseLength);
       setPlayerInput('');
     }
   };
 
   const handleChoiceClick = (choiceText: string) => {
-    if (!isLoading) {
+    if (!isLoading && !isSummarizing && isCurrentlyActivePage) {
       onPlayerAction(choiceText, true, 'action', selectedResponseLength); 
        setPlayerInput('');
     }
   };
   
-  const latestMessageWithChoices = [...gameMessages].reverse().find(msg => msg.type === 'narration' && msg.choices && msg.choices.length > 0);
+  const getLatestChoicesSource = useCallback(() => {
+    const isPotentiallyNewEmptyPage = currentPageDisplay > 1 &&
+                                       isCurrentlyActivePage &&
+                                       !displayedMessages.some(m => m.type === 'narration' && m.choices && m.choices.length > 0);
+
+    if (isPotentiallyNewEmptyPage) {
+        return [...allGameMessages].reverse().find(msg => msg.type === 'narration' && msg.choices && msg.choices.length > 0);
+    } else {
+        return [...displayedMessages].reverse().find(msg => msg.type === 'narration' && msg.choices && msg.choices.length > 0);
+    }
+  }, [allGameMessages, displayedMessages, currentPageDisplay, isCurrentlyActivePage]);
+  
+  const latestMessageWithChoices = getLatestChoicesSource();
+
 
   const closeModal = () => {
     setSelectedItem(null);
@@ -440,6 +572,16 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
     }
   }, [miniInfoPopover.isOpen, miniInfoPopover.entity]);
 
+  const getKeywordHighlightStyle = useCallback((): React.CSSProperties => {
+    const { textColor, fontFamily, fontSize, backgroundColor } = styleSettings.keywordHighlight;
+    const style: React.CSSProperties = {};
+    if (textColor) style.color = textColor;
+    if (fontFamily && fontFamily !== 'inherit') style.fontFamily = fontFamily;
+    if (fontSize && fontSize !== 'inherit') style.fontSize = fontSize;
+    if (backgroundColor && backgroundColor !== 'transparent') style.backgroundColor = backgroundColor;
+    return style;
+  }, [styleSettings.keywordHighlight]);
+
   const parseAndHighlightText = useCallback((text: string, kb: KnowledgeBase): React.ReactNode[] => {
     if (!text) return [text];
 
@@ -486,6 +628,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
     const resultNodes: React.ReactNode[] = [];
     let lastIndex = 0;
     let match;
+    const highlightStyle = getKeywordHighlightStyle();
 
     while ((match = regex.exec(text)) !== null) {
         const keywordText = match[0]; 
@@ -503,6 +646,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
                     entityType={keywordInfo.type}
                     entity={keywordInfo.entity}
                     onClick={handleKeywordClick}
+                    style={highlightStyle}
                 />
             );
         } else {
@@ -516,58 +660,158 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
     }
     
     return resultNodes.length > 0 ? resultNodes : [text];
-  }, [handleKeywordClick]);
+  }, [handleKeywordClick, getKeywordHighlightStyle]);
+
+  const isSaveDisabled = 
+    (storageType === 'cloud' && !firebaseUser) || 
+    isSavingGame || 
+    isLoading ||
+    isSummarizing; 
+  
+  const canRollbackStandard = knowledgeBase.turnHistory && knowledgeBase.turnHistory.length > 0 && !(knowledgeBase.playerStats.turn === 1 && knowledgeBase.turnHistory.length ===1 && knowledgeBase.turnHistory[0].knowledgeBaseSnapshot.playerStats.turn === 0);
+  const isStopButtonDisabled = isSummarizing || (!isLoading && !canRollbackStandard);
+
+  const getDynamicMessageStyles = (msgType: GameMessage['type']): React.CSSProperties => {
+    const styles: React.CSSProperties = {};
+    let setting: StyleSettingProperty | undefined;
+
+    if (msgType === 'narration') setting = styleSettings.narration;
+    else if (msgType === 'player_action') setting = styleSettings.playerAction;
+
+    if (setting) {
+      if (setting.fontFamily && setting.fontFamily !== 'inherit') styles.fontFamily = setting.fontFamily;
+      if (setting.fontSize && setting.fontSize !== 'inherit') styles.fontSize = setting.fontSize;
+      if (setting.textColor) styles.color = setting.textColor;
+      if (setting.backgroundColor && setting.backgroundColor !== 'transparent') styles.backgroundColor = setting.backgroundColor;
+    }
+    return styles;
+  };
+
+  const getChoiceButtonStyles = (): React.CSSProperties => {
+    const styles: React.CSSProperties = {};
+    const setting = styleSettings.choiceButton;
+    if (setting) {
+      if (setting.fontFamily && setting.fontFamily !== 'inherit') styles.fontFamily = setting.fontFamily;
+      if (setting.fontSize && setting.fontSize !== 'inherit') styles.fontSize = setting.fontSize;
+      if (setting.textColor) styles.color = setting.textColor;
+      // If backgroundColor is transparent or not set, Button variant default applies.
+      // If set, it overrides Button variant's background.
+      if (setting.backgroundColor && setting.backgroundColor !== 'transparent') {
+        styles.backgroundColor = setting.backgroundColor;
+      } else if (setting.backgroundColor === 'transparent') {
+        styles.backgroundColor = 'transparent'; // Ensure explicit transparency
+      }
+    }
+    return styles;
+  };
 
 
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-gray-100 p-2 sm:p-4">
       <header className="mb-4 flex justify-between items-center flex-shrink-0">
-        <h1 className="text-2xl sm:text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-green-400 via-cyan-500 to-blue-600">{knowledgeBase.worldConfig?.theme || "Đạo Đồ A.I"}</h1>
-        <div className="flex space-x-2">
-            <Button onClick={toggleCharPanel} variant={isCharPanelOpen ? "primary" : "secondary"} size="sm" aria-pressed={isCharPanelOpen}>{VIETNAMESE.characterButton}</Button>
-            <Button onClick={toggleWorldPanel} variant={isWorldPanelOpen ? "primary" : "secondary"} size="sm" aria-pressed={isWorldPanelOpen}>{VIETNAMESE.worldButton}</Button>
-            <Button onClick={toggleQuestsPanel} variant={isQuestsPanelOpen ? "primary" : "secondary"} size="sm" aria-pressed={isQuestsPanelOpen}>{VIETNAMESE.questsButton}</Button>
+        <h1 className="text-2xl sm:text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-green-400 via-cyan-500 to-blue-600">{knowledgeBase.worldConfig?.theme || "Role Play AI"}</h1>
+        <div className="flex space-x-2 flex-wrap gap-y-2"> {/* Added flex-wrap and gap-y-2 for better responsiveness */}
+            <Button onClick={toggleCharPanel} variant={isCharPanelOpen ? "primary" : "secondary"} size="sm" aria-pressed={isCharPanelOpen} disabled={isSummarizing}>{VIETNAMESE.characterButton}</Button>
+            <Button onClick={toggleWorldPanel} variant={isWorldPanelOpen ? "primary" : "secondary"} size="sm" aria-pressed={isWorldPanelOpen} disabled={isSummarizing}>{VIETNAMESE.worldButton}</Button>
+            <Button onClick={toggleQuestsPanel} variant={isQuestsPanelOpen ? "primary" : "secondary"} size="sm" aria-pressed={isQuestsPanelOpen} disabled={isSummarizing}>{VIETNAMESE.questsButton}</Button>
+            <Button
+              onClick={() => setIsStyleSettingsModalOpen(true)}
+              variant="secondary"
+              size="sm"
+              disabled={isSummarizing}
+              className="border-purple-500 text-purple-300 hover:bg-purple-700 hover:text-white"
+            >
+              {VIETNAMESE.gameplaySettingsButton}
+            </Button>
+             <Button
+                onClick={onRollbackTurn}
+                variant="secondary"
+                size="sm"
+                disabled={isStopButtonDisabled}
+                title={isLoading ? "Dừng nhận phản hồi và lùi lượt" : (canRollbackStandard ? VIETNAMESE.rollbackTurn : VIETNAMESE.cannotRollbackFurther)}
+                className="border-amber-500 text-amber-300 hover:bg-amber-700 hover:text-white"
+            >
+                {VIETNAMESE.stopButton}
+            </Button>
             <Button 
                 onClick={onSaveGame} 
                 variant="primary" 
                 size="sm" 
-                disabled={!firebaseUser || isSavingGame || isLoading} 
+                disabled={isSaveDisabled}
                 isLoading={isSavingGame}
                 loadingText="Đang lưu..."
-                title={!firebaseUser ? VIETNAMESE.signInRequiredForSave : undefined}
+                title={(storageType === 'cloud' && !firebaseUser) ? VIETNAMESE.signInRequiredForSave : undefined}
             >
                 {VIETNAMESE.saveGameButton}
             </Button>
-            <Button onClick={() => setShowDebugPanel(prev => !prev)} variant={showDebugPanel ? "primary" : "ghost"} size="sm" className="border-yellow-500 text-yellow-300 hover:bg-yellow-700 hover:text-white">Debug</Button>
-            <Button onClick={onQuit} variant="danger" size="sm">Thoát Game</Button>
+            <Button onClick={() => setShowDebugPanel(prev => !prev)} variant={showDebugPanel ? "primary" : "ghost"} size="sm" className="border-yellow-500 text-yellow-300 hover:bg-yellow-700 hover:text-white" disabled={isSummarizing}>Debug</Button>
+            <Button onClick={onQuit} variant="danger" size="sm" disabled={isSummarizing}>Thoát Game</Button>
         </div>
       </header>
 
       <div className="flex-grow flex flex-col md:flex-row gap-4 overflow-hidden">
         {/* Story Log & Actions - Main Content Area */}
-        <div className={`flex-grow flex flex-col bg-gray-850 shadow-xl rounded-lg transition-all duration-300 ease-in-out ${openSidebar ? 'md:w-2/3 lg:w-3/4' : 'w-full'}`}>
+        <div className={`flex-grow flex flex-col bg-gray-850 shadow-xl rounded-lg transition-all duration-300 ease-in-out ${openSidebar ? 'md:w-3/4 lg:w-4/5' : 'w-full'}`}>
           <div id="story-log" className="flex-grow overflow-y-auto p-3 sm:p-4 bg-gray-800 rounded-t-lg custom-scrollbar">
-            {gameMessages.map((msg) => (
-              <div key={msg.id} className={`flex ${msg.isPlayerInput ? 'justify-end' : 'justify-start'}`}>
-                <div className={`my-1 max-w-xl p-3 rounded-xl shadow ${
-                  msg.type === 'narration' ? 'bg-gray-700 text-gray-100' :
-                  msg.type === 'player_action' ? 'bg-indigo-600 text-white' :
-                  msg.type === 'system' ? 'bg-yellow-600 bg-opacity-30 text-yellow-200 border border-yellow-500 italic text-sm' :
-                  msg.type === 'error' ? 'bg-red-700 text-white' :
-                  'bg-gray-600 text-gray-200'
-                }`}>
-                  <p className="whitespace-pre-wrap leading-relaxed">
-                    {parseAndHighlightText(msg.content, knowledgeBase)}
-                  </p>
+            {displayedMessages.map((msg) => {
+              const messageBaseClass = 'my-1 max-w-6xl p-3 rounded-xl shadow';
+              let typeSpecificClass = '';
+              let dynamicStyle = getDynamicMessageStyles(msg.type);
+
+              // Original Tailwind classes for fallback or if not overridden by dynamic styles
+              if (msg.type === 'narration') {
+                if (!dynamicStyle.backgroundColor) typeSpecificClass = 'bg-gray-700';
+                if (!dynamicStyle.color) typeSpecificClass += (typeSpecificClass ? ' ' : '') + 'text-gray-100';
+              } else if (msg.type === 'player_action') {
+                if (!dynamicStyle.backgroundColor) typeSpecificClass = 'bg-indigo-600';
+                if (!dynamicStyle.color) typeSpecificClass += (typeSpecificClass ? ' ' : '') + 'text-white';
+              } else if (msg.type === 'system') {
+                typeSpecificClass = 'bg-yellow-600 bg-opacity-30 text-yellow-200 border border-yellow-500 italic text-sm';
+              } else if (msg.type === 'error') {
+                typeSpecificClass = 'bg-red-700 text-white';
+              } else if (msg.type === 'page_summary') {
+                typeSpecificClass = 'bg-purple-800 bg-opacity-50 text-purple-200 border border-purple-600 italic text-sm mt-3 mb-2';
+              } else {
+                 typeSpecificClass = 'bg-gray-600 text-gray-200'; // Default for other types if any
+              }
+              
+              return (
+                <div key={msg.id} className={`flex ${msg.isPlayerInput ? 'justify-end' : 'justify-start'}`}>
+                  <div 
+                    className={`${messageBaseClass} ${typeSpecificClass}`}
+                    style={dynamicStyle}
+                  >
+                    <p className="whitespace-pre-wrap leading-relaxed">
+                      {parseAndHighlightText(msg.content, knowledgeBase)}
+                    </p>
+                  </div>
                 </div>
+              );
+            })}
+            {(isLoading && displayedMessages.length === 0 && knowledgeBase.playerStats.turn === 0) && <Spinner text={VIETNAMESE.contactingAI} size="sm" className="my-4" />}
+            
+            {(isLoading && !isSummarizing && isCurrentlyActivePage && displayedMessages.length > 0) && (
+              <div className="text-center text-gray-400 italic py-2 mt-2">
+                {VIETNAMESE.contactingAI}
               </div>
-            ))}
-            {isLoading && gameMessages.length === 0 && <Spinner text={VIETNAMESE.contactingAI} size="sm" className="my-4" />}
+            )}
+            {isSummarizing && ( 
+                 <div className="text-center text-gray-400 italic py-2 mt-2">
+                     <Spinner 
+                        text={
+                            displayedMessages.some(m => m.content.includes(VIETNAMESE.creatingMissingSummary)) 
+                            ? VIETNAMESE.creatingMissingSummary
+                            : VIETNAMESE.summarizingAndPreparingNextPage
+                        } 
+                        size="sm" />
+                 </div>
+            )}
             <div ref={messagesEndRef} />
           </div>
 
-          <div className="bg-gray-800 p-3 sm:p-4 border-t border-gray-700 rounded-b-lg flex-shrink-0">
-            {latestMessageWithChoices?.choices && latestMessageWithChoices.choices.length > 0 && (
+          {/* Input Area */}
+          <div className="bg-gray-800 p-3 sm:p-4 border-t border-gray-700 flex-shrink-0">
+            {latestMessageWithChoices?.choices && latestMessageWithChoices.choices.length > 0 && isCurrentlyActivePage && !isSummarizing && (
               <div className="mb-4">
                 <p className="text-sm text-indigo-300 mb-2">{VIETNAMESE.aiSuggestedOrTypeBelow}</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -575,9 +819,10 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
                     <Button
                       key={index}
                       variant="ghost"
-                      className="w-full text-left justify-start hover:bg-indigo-700 hover:text-white py-2 px-3 text-sm sm:text-base"
+                      className="w-full text-left justify-start py-2 px-3 text-sm sm:text-base" // Removed hover styles to be controlled by customStyles or default ghost
+                      customStyles={getChoiceButtonStyles()} // Apply dynamic styles
                       onClick={() => handleChoiceClick(choice.text)}
-                      disabled={isLoading}
+                      disabled={isLoading || isSummarizing || !isCurrentlyActivePage}
                     >
                       {index + 1}. {choice.text}
                     </Button>
@@ -587,17 +832,16 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
             )}
             
             <form onSubmit={handleSubmitAction} className="flex gap-2 items-center mt-2">
-              {/* Response Length Dropdown */}
               <div className="relative flex-shrink-0" ref={responseLengthDropdownRef}>
                 <Button
                   type="button"
                   variant="primary"
                   size="md"
                   onClick={() => setIsResponseLengthDropdownOpen(!isResponseLengthDropdownOpen)}
-                  className="px-3 min-w-[160px] flex items-center justify-between" // Adjusted width
+                  className="px-3 min-w-[160px] flex items-center justify-between" 
                   aria-haspopup="true"
                   aria-expanded={isResponseLengthDropdownOpen}
-                  disabled={isLoading}
+                  disabled={isLoading || isSummarizing || !isCurrentlyActivePage}
                 >
                   <span>{getResponseLengthButtonLabel()}</span>
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`w-5 h-5 ml-1 transition-transform duration-200 ${isResponseLengthDropdownOpen ? 'transform rotate-180' : ''}`}>
@@ -626,7 +870,6 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
                 )}
               </div>
 
-              {/* Action/Story Type Dropdown */}
               <div className="relative flex-shrink-0" ref={actionTypeDropdownRef}>
                 <Button
                   type="button"
@@ -636,7 +879,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
                   className="px-3 min-w-[130px] flex items-center justify-between" 
                   aria-haspopup="true"
                   aria-expanded={isActionTypeDropdownOpen}
-                  disabled={isLoading}
+                  disabled={isLoading || isSummarizing || !isCurrentlyActivePage}
                 >
                   <span>
                     {currentActionType === 'action' ? VIETNAMESE.inputTypeActionLabel : VIETNAMESE.inputTypeStoryLabel}
@@ -670,32 +913,36 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
                 type="text"
                 value={playerInput}
                 onChange={handleInputChange}
-                placeholder={VIETNAMESE.enterAction}
+                placeholder={!isCurrentlyActivePage ? "Chỉ có thể hành động ở trang hiện tại nhất." : VIETNAMESE.enterAction}
                 className="flex-grow p-3 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-100 placeholder-gray-400 transition-colors duration-150"
-                disabled={isLoading}
+                disabled={isLoading || isSummarizing || !isCurrentlyActivePage}
+                title={!isCurrentlyActivePage ? "Bạn chỉ có thể hành động ở trang hiện tại nhất của cuộc phiêu lưu." : (isSummarizing ? VIETNAMESE.summarizingAndPreparingNextPage : undefined)}
               />
               <Button 
                 type="submit" 
                 variant="primary" 
                 size="md" 
-                disabled={isLoading || playerInput.trim() === ""}
-                isLoading={isLoading && playerInput.trim() !== ""}
-                loadingText="Gửi..." 
+                disabled={isLoading || isSummarizing || playerInput.trim() === "" || !isCurrentlyActivePage}
+                isLoading={isLoading && playerInput.trim() !== "" && !isSummarizing && isCurrentlyActivePage} // Show loading only if this button initiated it
+                loadingText={VIETNAMESE.sendingAction}
               >
-                {VIETNAMESE.okButton}
+                {VIETNAMESE.sendInputButton}
               </Button>
             </form>
-            {isLoading && !latestMessageWithChoices?.choices && gameMessages.length > 0 && (
-              <div className="text-center text-gray-400 italic py-2 mt-2">
-                {VIETNAMESE.contactingAI}
-              </div>
-            )}
           </div>
+          <PaginationControls 
+            currentPage={currentPageDisplay}
+            totalPages={totalPages}
+            onPrev={onGoToPrevPage}
+            onNext={onGoToNextPage}
+            onJump={onJumpToPage}
+            isSummarizing={isSummarizing}
+          />
         </div>
 
         {/* Character Panel Sidebar (Inline) */}
         {isCharPanelOpen && (
-          <div className="w-full md:w-1/3 lg:w-1/4 bg-gray-800 shadow-lg rounded-lg flex flex-col overflow-hidden md:order-last p-1 transition-all duration-300 ease-in-out">
+          <div className="w-full md:w-1/4 lg:w-1/5 bg-gray-800 shadow-lg rounded-lg flex flex-col overflow-hidden md:order-last p-1 transition-all duration-300 ease-in-out">
             <div className="flex justify-between items-center p-3 border-b border-gray-700 flex-shrink-0">
               <h3 className="text-xl font-semibold text-indigo-400">{VIETNAMESE.characterPanelTitle}</h3>
               <Button onClick={toggleCharPanel} variant="ghost" size="sm" aria-label={VIETNAMESE.closeButton} className="text-gray-400 hover:text-white">
@@ -712,7 +959,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
 
         {/* Quests Panel Sidebar (Inline) */}
         {isQuestsPanelOpen && (
-          <div className="w-full md:w-1/3 lg:w-1/4 bg-gray-800 shadow-lg rounded-lg flex flex-col overflow-hidden md:order-last p-1 transition-all duration-300 ease-in-out">
+          <div className="w-full md:w-1/4 lg:w-1/5 bg-gray-800 shadow-lg rounded-lg flex flex-col overflow-hidden md:order-last p-1 transition-all duration-300 ease-in-out">
              <div className="flex justify-between items-center p-3 border-b border-gray-700 flex-shrink-0">
               <h3 className="text-xl font-semibold text-indigo-400">{VIETNAMESE.questsPanelTitle}</h3>
               <Button onClick={toggleQuestsPanel} variant="ghost" size="sm" aria-label={VIETNAMESE.closeButton} className="text-gray-400 hover:text-white">
@@ -727,7 +974,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
 
         {/* World Panel Sidebar (Inline) */}
         {isWorldPanelOpen && (
-            <div className="w-full md:w-1/3 lg:w-1/4 bg-gray-800 shadow-lg rounded-lg flex flex-col overflow-hidden md:order-last p-1 transition-all duration-300 ease-in-out">
+            <div className="w-full md:w-1/4 lg:w-1/5 bg-gray-800 shadow-lg rounded-lg flex flex-col overflow-hidden md:order-last p-1 transition-all duration-300 ease-in-out">
                 <div className="flex justify-between items-center p-3 border-b border-gray-700 flex-shrink-0">
                     <h3 className="text-xl font-semibold text-indigo-400">{VIETNAMESE.worldPanelTitle}</h3>
                     <Button onClick={toggleWorldPanel} variant="ghost" size="sm" aria-label={VIETNAMESE.closeButton} className="text-gray-400 hover:text-white">
@@ -794,21 +1041,48 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
         {selectedItem && (
           <div className="space-y-2">
             <p><strong className="text-indigo-300">Tên:</strong> {selectedItem.name}</p>
-            <p><strong className="text-indigo-300">Loại:</strong> {selectedItem.type}</p>
+            <p><strong className="text-indigo-300">Phân loại:</strong> {selectedItem.category}
+                {selectedItem.category === "Equipment" && ` (${(selectedItem as GameTemplates.EquipmentTemplate).equipmentType})`}
+                {selectedItem.category === "Potion" && ` (${(selectedItem as GameTemplates.PotionTemplate).potionType})`}
+                {selectedItem.category === "Material" && ` (${(selectedItem as GameTemplates.MaterialTemplate).materialType})`}
+            </p>
             <p><strong className="text-indigo-300">Số lượng:</strong> {selectedItem.quantity}</p>
             <p><strong className="text-indigo-300">Mô tả:</strong> {selectedItem.description}</p>
-            {selectedItem.effect && <p><strong className="text-indigo-300">Hiệu ứng:</strong> {selectedItem.effect}</p>}
+            {selectedItem.category === "Equipment" && (selectedItem as GameTemplates.EquipmentTemplate).slot && (
+                 <p><strong className="text-indigo-300">Vị trí:</strong> {(selectedItem as GameTemplates.EquipmentTemplate).slot}</p>
+            )}
+            {selectedItem.category === "Equipment" && 
+                Object.keys((selectedItem as GameTemplates.EquipmentTemplate).statBonuses).length > 0 && (
+              <div>
+                <strong className="text-indigo-300">Chỉ số cộng thêm:</strong>
+                <ul className="list-disc list-inside pl-4 text-sm">
+                  {Object.entries((selectedItem as GameTemplates.EquipmentTemplate).statBonuses).map(([key, value]) => {
+                    if (value && typeof value === 'number' && value !== 0) {
+                      const statLabels: Record<string, string> = { hp: "HP", maxHp: "HP Tối Đa", mana: "Mana", maxMana: "Mana Tối Đa", atk: "Tấn Công", exp: "EXP"};
+                      const label = statLabels[key as keyof PlayerStats] || key;
+                      return <li key={key}><span className="text-gray-300">{label}:</span> <span className={value > 0 ? "text-green-400" : "text-red-400"}>{value > 0 ? `+${value}` : value}</span></li>;
+                    }
+                    return null;
+                  })}
+                </ul>
+              </div>
+            )}
+            {selectedItem.category === "Equipment" && (selectedItem as GameTemplates.EquipmentTemplate).uniqueEffects && (selectedItem as GameTemplates.EquipmentTemplate).uniqueEffects.length > 0 && (
+                <p><strong className="text-indigo-300">Hiệu ứng đặc biệt:</strong> {(selectedItem as GameTemplates.EquipmentTemplate).uniqueEffects.join(', ')}</p>
+            )}
+            {selectedItem.category === "Potion" && (selectedItem as GameTemplates.PotionTemplate).effects && (selectedItem as GameTemplates.PotionTemplate).effects.length > 0 && (
+                 <p><strong className="text-indigo-300">Hiệu ứng:</strong> {(selectedItem as GameTemplates.PotionTemplate).effects.join(', ')}</p>
+            )}
             {selectedItem.usable !== undefined && <p><strong className="text-indigo-300">Có thể dùng:</strong> {selectedItem.usable ? "Có" : "Không"}</p>}
             {selectedItem.consumable !== undefined && <p><strong className="text-indigo-300">Tiêu hao:</strong> {selectedItem.consumable ? "Có" : "Không"}</p>}
-            {selectedItem.slot && <p><strong className="text-indigo-300">Vị trí:</strong> {selectedItem.slot}</p>}
           </div>
         )}
         {selectedSkill && (
           <div className="space-y-2">
             <p><strong className="text-indigo-300">Tên:</strong> {selectedSkill.name}</p>
-            <p><strong className="text-indigo-300">Loại:</strong> {selectedSkill.type}</p>
-            <p><strong className="text-indigo-300">Mô tả:</strong> {selectedSkill.description}</p>
-            <p><strong className="text-indigo-300">Hiệu ứng:</strong> {selectedSkill.effect}</p>
+            <p><strong className="text-indigo-300">Loại:</strong> {selectedSkill.skillType}</p>
+            {selectedSkill.description && <p><strong className="text-indigo-300">Mô tả:</strong> {selectedSkill.description}</p>}
+            {selectedSkill.detailedEffect && <p><strong className="text-indigo-300">Hiệu ứng chi tiết:</strong> {selectedSkill.detailedEffect}</p>}
             {selectedSkill.manaCost !== undefined && <p><strong className="text-indigo-300">Tiêu hao Mana:</strong> {selectedSkill.manaCost}</p>}
             {selectedSkill.cooldown !== undefined && <p><strong className="text-indigo-300">Thời gian hồi:</strong> {selectedSkill.cooldown} lượt</p>}
           </div>
@@ -816,13 +1090,13 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
         {selectedQuest && (
           <div className="space-y-2">
             <p><strong className="text-indigo-300">Tên:</strong> {selectedQuest.title}</p>
-            <p><strong className="text-indigo-300">Mô tả:</strong> {selectedQuest.description}</p>
+            {selectedQuest.description && <p><strong className="text-indigo-300">Mô tả:</strong> {selectedQuest.description}</p>}
             <p><strong className="text-indigo-300">Trạng thái:</strong> 
               {selectedQuest.status === 'active' ? "Đang làm" : selectedQuest.status === 'completed' ? "Hoàn thành" : "Thất bại"}
             </p>
             <p className="font-semibold text-indigo-300 mt-2">Mục tiêu:</p>
             {selectedQuest.objectives.length > 0 ? (
-              <ul className="list-none pl-0 space-y-1"> {/* Changed to list-none and pl-0 */}
+              <ul className="list-none pl-0 space-y-1"> 
                 {selectedQuest.objectives.map(obj => (
                   <li key={obj.id} className={`flex items-center ${obj.completed ? 'text-green-400' : 'text-gray-300'}`}>
                     {obj.completed && (
@@ -840,25 +1114,27 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
         {selectedNpc && (
             <div className="space-y-2">
                 <p><strong className="text-indigo-300">Tên:</strong> {selectedNpc.name}</p>
-                <p><strong className="text-indigo-300">Mô tả:</strong> {selectedNpc.description || "Chưa có thông tin."}</p>
+                {selectedNpc.title && <p><strong className="text-indigo-300">Chức danh:</strong> {selectedNpc.title}</p>}
+                {selectedNpc.description && selectedNpc.description.trim() && <p><strong className="text-indigo-300">Mô tả:</strong> {selectedNpc.description}</p>}
+                {selectedNpc.factionId && <p><strong className="text-indigo-300">Phe phái ID:</strong> {selectedNpc.factionId}</p>}
             </div>
         )}
         {selectedLocation && (
             <div className="space-y-2">
                 <p><strong className="text-indigo-300">Tên:</strong> {selectedLocation.name}</p>
-                <p><strong className="text-indigo-300">Mô tả:</strong> {selectedLocation.description}</p>
+                {selectedLocation.description && selectedLocation.description.trim() && <p><strong className="text-indigo-300">Mô tả:</strong> {selectedLocation.description}</p>}
             </div>
         )}
         {selectedLore && (
             <div className="space-y-2">
                 <p><strong className="text-indigo-300">Tiêu đề:</strong> {selectedLore.title}</p>
-                <p className="whitespace-pre-wrap"><strong className="text-indigo-300">Nội dung:</strong> {selectedLore.content}</p>
+                {selectedLore.content && selectedLore.content.trim() && <p className="whitespace-pre-wrap"><strong className="text-indigo-300">Nội dung:</strong> {selectedLore.content}</p>}
             </div>
         )}
         {selectedCompanion && (
             <div className="space-y-2">
                 <p><strong className="text-indigo-300">Tên:</strong> {selectedCompanion.name}</p>
-                <p><strong className="text-indigo-300">Mô tả:</strong> {selectedCompanion.description}</p>
+                {selectedCompanion.description && selectedCompanion.description.trim() && <p><strong className="text-indigo-300">Mô tả:</strong> {selectedCompanion.description}</p>}
                 <p><strong className="text-indigo-300">HP:</strong> {selectedCompanion.hp} / {selectedCompanion.maxHp}</p>
                 <p><strong className="text-indigo-300">Mana:</strong> {selectedCompanion.mana} / {selectedCompanion.maxMana}</p>
                 <p><strong className="text-indigo-300">ATK:</strong> {selectedCompanion.atk}</p>
@@ -876,8 +1152,27 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
       />
 
       {/* Debug Panel Display */}
-      {showDebugPanel && <DebugPanelDisplay kb={knowledgeBase} rawAiResponsesLog={rawAiResponsesLog} />}
-
+      {showDebugPanel && <DebugPanelDisplay 
+                            kb={knowledgeBase} 
+                            sentPromptsLog={sentPromptsLog} 
+                            rawAiResponsesLog={rawAiResponsesLog} 
+                            currentPageDisplay={currentPageDisplay} 
+                            totalPages={totalPages}
+                            isAutoPlaying={isAutoPlaying}
+                            onToggleAutoPlay={onToggleAutoPlay}
+                           />}
+      
+      {/* Style Settings Modal */}
+      {isStyleSettingsModalOpen && (
+        <StyleSettingsModal
+          initialSettings={styleSettings}
+          onSave={(newSettings) => {
+            onUpdateStyleSettings(newSettings);
+            setIsStyleSettingsModalOpen(false);
+          }}
+          onClose={() => setIsStyleSettingsModalOpen(false)}
+        />
+      )}
     </div>
   );
 };

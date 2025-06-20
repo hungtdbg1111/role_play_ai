@@ -1,11 +1,11 @@
 
 
-import React, { useState, useCallback, ChangeEvent } from 'react';
+import React, { useState, useCallback, ChangeEvent, useRef } from 'react';
 import { GameScreen, WorldSettings, StartingSkill, StartingItem, StartingNPC, StartingLore } from '../types';
 import Button from './ui/Button';
 import Spinner from './ui/Spinner'; 
-import { VIETNAMESE, DEFAULT_WORLD_SETTINGS } from '../constants';
-import { generateWorldDetailsFromStory } from '../services/geminiService';
+import { VIETNAMESE, DEFAULT_WORLD_SETTINGS, MAX_TOKENS_FANFIC } from '../constants';
+import { generateWorldDetailsFromStory, generateFanfictionWorldDetails, countTokens } from '../services/geminiService';
 
 interface GameSetupScreenProps {
   setCurrentScreen: (screen: GameScreen) => void;
@@ -28,9 +28,10 @@ interface InputFieldProps {
   max?: number | string; 
   step?: number | string;
   rows?: number;
+  disabled?: boolean;
 }
 
-const InputField: React.FC<InputFieldProps> = ({ label, id, name, value, checked, onChange, type = "text", options, textarea, className = "", placeholder, min, max, step, rows = 2 }) => (
+const InputField: React.FC<InputFieldProps> = ({ label, id, name, value, checked, onChange, type = "text", options, textarea, className = "", placeholder, min, max, step, rows = 2, disabled = false }) => (
   <div className={`mb-4 ${type === 'checkbox' ? 'flex items-center' : ''}`}>
     {type === 'checkbox' ? (
       <>
@@ -41,6 +42,7 @@ const InputField: React.FC<InputFieldProps> = ({ label, id, name, value, checked
           checked={checked} 
           onChange={onChange} 
           className={`h-5 w-5 text-indigo-600 border-gray-500 rounded focus:ring-indigo-500 bg-gray-700 mr-2 ${className}`} 
+          disabled={disabled}
         />
         <label htmlFor={id} className="text-sm font-medium text-gray-300 select-none">
           {label}
@@ -50,9 +52,9 @@ const InputField: React.FC<InputFieldProps> = ({ label, id, name, value, checked
       <>
         <label htmlFor={id} className="block text-sm font-medium text-gray-300 mb-1">{label}</label>
         {textarea ? (
-          <textarea id={id} name={name} value={value as string ?? ''} onChange={onChange} rows={rows} className={`w-full p-2 bg-gray-700 border border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-gray-100 transition-colors duration-150 ${className}`} placeholder={placeholder} />
+          <textarea id={id} name={name} value={value as string ?? ''} onChange={onChange} rows={rows} className={`w-full p-2 bg-gray-700 border border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-gray-100 transition-colors duration-150 ${className}`} placeholder={placeholder} disabled={disabled} />
         ) : type === 'select' && options ? (
-          <select id={id} name={name} value={value as string ?? ''} onChange={onChange} className={`w-full p-2 bg-gray-700 border border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-gray-100 transition-colors duration-150 ${className}`}>
+          <select id={id} name={name} value={value as string ?? ''} onChange={onChange} className={`w-full p-2 bg-gray-700 border border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-gray-100 transition-colors duration-150 ${className}`} disabled={disabled}>
             {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
           </select>
         ) : (
@@ -67,6 +69,7 @@ const InputField: React.FC<InputFieldProps> = ({ label, id, name, value, checked
             min={min} 
             max={max} 
             step={step} 
+            disabled={disabled}
           />
         )}
       </>
@@ -84,9 +87,21 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
     startingLore: [...(DEFAULT_WORLD_SETTINGS.startingLore || [])],
   });
   
+  // State for original story idea generator
   const [storyIdea, setStoryIdea] = useState('');
   const [isGeneratingDetails, setIsGeneratingDetails] = useState(false);
-  const [generatorMessage, setGeneratorMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [generatorMessage, setGeneratorMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  // State for fanfiction generator
+  const [fanficSourceType, setFanficSourceType] = useState<'name' | 'file'>('name');
+  const [fanficStoryName, setFanficStoryName] = useState('');
+  const [fanficFile, setFanficFile] = useState<File | null>(null);
+  const [fanficFileContent, setFanficFileContent] = useState<string | null>(null);
+  const [fanficTokenCount, setFanficTokenCount] = useState<number | null>(null);
+  const [fanficPlayerDescription, setFanficPlayerDescription] = useState('');
+  const [isGeneratingFanficDetails, setIsGeneratingFanficDetails] = useState(false);
+  const [isLoadingTokens, setIsLoadingTokens] = useState(false);
+  const fanficFileInputRef = useRef<HTMLInputElement>(null);
 
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -96,7 +111,8 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
     } else {
       setSettings(prev => ({ ...prev, [name]: value }));
     }
-  }, []);
+    if (generatorMessage) setGeneratorMessage(null); // Clear message on manual form change
+  }, [generatorMessage]);
 
   // --- Starting Skills Handlers ---
   const handleStartingSkillChange = (index: number, field: keyof StartingSkill, value: string) => {
@@ -196,24 +212,24 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
       return;
     }
     setIsGeneratingDetails(true);
-    setGeneratorMessage(null);
+    setGeneratorMessage({text: VIETNAMESE.generatingWorldDetails, type: 'info'});
     try {
       const generatedElements = await generateWorldDetailsFromStory(storyIdea);
       setSettings(prev => ({
         ...prev,
-        playerName: generatedElements.playerName || prev.playerName,
-        playerPersonality: generatedElements.playerPersonality || prev.playerPersonality,
-        playerBackstory: generatedElements.playerBackstory || prev.playerBackstory,
-        playerGoal: generatedElements.playerGoal || prev.playerGoal,
-        playerStartingTraits: generatedElements.playerStartingTraits || prev.playerStartingTraits,
-        theme: generatedElements.worldTheme || prev.theme,
-        settingDescription: generatedElements.worldSettingDescription || prev.settingDescription,
-        writingStyle: generatedElements.worldWritingStyle || prev.writingStyle,
-        currencyName: generatedElements.currencyName || prev.currencyName,
-        startingSkills: generatedElements.startingSkills,
-        startingItems: generatedElements.startingItems,
-        startingNPCs: generatedElements.startingNPCs,
-        startingLore: generatedElements.startingLore,
+        playerName: generatedElements.response.playerName || prev.playerName,
+        playerPersonality: generatedElements.response.playerPersonality || prev.playerPersonality,
+        playerBackstory: generatedElements.response.playerBackstory || prev.playerBackstory,
+        playerGoal: generatedElements.response.playerGoal || prev.playerGoal,
+        playerStartingTraits: generatedElements.response.playerStartingTraits || prev.playerStartingTraits,
+        theme: generatedElements.response.worldTheme || prev.theme,
+        settingDescription: generatedElements.response.worldSettingDescription || prev.settingDescription,
+        writingStyle: generatedElements.response.worldWritingStyle || prev.writingStyle,
+        currencyName: generatedElements.response.currencyName || prev.currencyName,
+        startingSkills: generatedElements.response.startingSkills.length > 0 ? generatedElements.response.startingSkills : prev.startingSkills,
+        startingItems: generatedElements.response.startingItems.length > 0 ? generatedElements.response.startingItems : prev.startingItems,
+        startingNPCs: generatedElements.response.startingNPCs.length > 0 ? generatedElements.response.startingNPCs : prev.startingNPCs,
+        startingLore: generatedElements.response.startingLore.length > 0 ? generatedElements.response.startingLore : prev.startingLore,
       }));
       setGeneratorMessage({ text: VIETNAMESE.worldDetailsGeneratedSuccess, type: 'success' });
     } catch (error) {
@@ -223,6 +239,97 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
       setIsGeneratingDetails(false);
     }
   };
+  
+  const handleFanficFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    setGeneratorMessage(null);
+    setFanficTokenCount(null);
+    setFanficFileContent(null);
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.type !== "text/plain") {
+        setGeneratorMessage({text: "Vui lòng chọn file .txt hợp lệ.", type: 'error'});
+        setFanficFile(null);
+        if(fanficFileInputRef.current) fanficFileInputRef.current.value = "";
+        return;
+      }
+      setFanficFile(file);
+      setIsLoadingTokens(true);
+      setGeneratorMessage({text: VIETNAMESE.tokenCountCalculating, type: 'info'});
+      try {
+        const text = await file.text();
+        setFanficFileContent(text);
+        const tokens = await countTokens(text);
+        setFanficTokenCount(tokens);
+        if (tokens > MAX_TOKENS_FANFIC) {
+          setGeneratorMessage({text: VIETNAMESE.tokenCountExceededError(MAX_TOKENS_FANFIC), type: 'error'});
+        } else {
+          setGeneratorMessage({text: `${VIETNAMESE.tokenCountLabel} ${tokens.toLocaleString()}`, type: 'success'});
+        }
+      } catch (err) {
+        console.error("Error processing fanfic file:", err);
+        setGeneratorMessage({text: VIETNAMESE.tokenCountError + (err instanceof Error ? ` ${err.message}` : ''), type: 'error'});
+        setFanficFileContent(null);
+        setFanficTokenCount(null);
+      } finally {
+        setIsLoadingTokens(false);
+      }
+    } else {
+      setFanficFile(null);
+    }
+  };
+
+  const handleGenerateFanficDetails = async () => {
+    let sourceMaterial: string = '';
+    let isSourceContent = false;
+
+    if (fanficSourceType === 'name') {
+      if (!fanficStoryName.trim()) {
+        setGeneratorMessage({ text: VIETNAMESE.pleaseEnterStoryName, type: 'error' });
+        return;
+      }
+      sourceMaterial = fanficStoryName.trim();
+    } else { // 'file'
+      if (!fanficFileContent || !fanficFile) {
+        setGeneratorMessage({ text: VIETNAMESE.pleaseSelectFile, type: 'error' });
+        return;
+      }
+      if (fanficTokenCount && fanficTokenCount > MAX_TOKENS_FANFIC) {
+        setGeneratorMessage({ text: VIETNAMESE.tokenCountExceededError(MAX_TOKENS_FANFIC), type: 'error'});
+        return;
+      }
+      sourceMaterial = fanficFileContent;
+      isSourceContent = true;
+    }
+    
+    setIsGeneratingFanficDetails(true);
+    setGeneratorMessage({text: VIETNAMESE.generatingFanficDetails, type: 'info'});
+    try {
+      const generatedElements = await generateFanfictionWorldDetails(sourceMaterial, isSourceContent, fanficPlayerDescription.trim());
+      setSettings(prev => ({
+        ...prev,
+        playerName: generatedElements.response.playerName || prev.playerName,
+        playerPersonality: generatedElements.response.playerPersonality || prev.playerPersonality,
+        playerBackstory: generatedElements.response.playerBackstory || prev.playerBackstory,
+        playerGoal: generatedElements.response.playerGoal || prev.playerGoal,
+        playerStartingTraits: generatedElements.response.playerStartingTraits || prev.playerStartingTraits,
+        theme: generatedElements.response.worldTheme || prev.theme,
+        settingDescription: generatedElements.response.worldSettingDescription || prev.settingDescription,
+        writingStyle: generatedElements.response.worldWritingStyle || prev.writingStyle,
+        currencyName: generatedElements.response.currencyName || prev.currencyName,
+        startingSkills: generatedElements.response.startingSkills.length > 0 ? generatedElements.response.startingSkills : prev.startingSkills,
+        startingItems: generatedElements.response.startingItems.length > 0 ? generatedElements.response.startingItems : prev.startingItems,
+        startingNPCs: generatedElements.response.startingNPCs.length > 0 ? generatedElements.response.startingNPCs : prev.startingNPCs, // NPCs can be many
+        startingLore: generatedElements.response.startingLore.length > 0 ? generatedElements.response.startingLore : prev.startingLore,   // Lore can be many
+      }));
+      setGeneratorMessage({ text: VIETNAMESE.fanficDetailsGeneratedSuccess, type: 'success' });
+    } catch (error) {
+      console.error("Error generating fanfiction world details:", error);
+      setGeneratorMessage({ text: `${VIETNAMESE.errorGeneratingFanficDetails} ${error instanceof Error ? error.message : ''}`, type: 'error' });
+    } finally {
+      setIsGeneratingFanficDetails(false);
+    }
+  };
+
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -248,7 +355,7 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
         
         <form onSubmit={handleSubmit} className="space-y-6">
 
-          {/* Story Idea Generator Section */}
+          {/* Story Idea Generator Section (Original) */}
           <fieldset className="border border-purple-700 p-4 rounded-md bg-purple-900/10">
             <legend className="text-xl font-semibold text-purple-400 px-2">{VIETNAMESE.storyIdeaGeneratorSection}</legend>
             <InputField
@@ -256,30 +363,99 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
               id="storyIdea"
               name="storyIdea"
               value={storyIdea}
-              onChange={(e) => setStoryIdea(e.target.value)}
+              onChange={(e) => { setStoryIdea(e.target.value); if (generatorMessage) setGeneratorMessage(null); }}
               textarea
-              rows={4}
+              rows={3}
               placeholder={VIETNAMESE.storyIdeaDescriptionPlaceholder}
-              className="mt-4"
+              className="mt-2"
             />
-            {generatorMessage && (
-              <div className={`my-3 p-2 text-sm rounded-md ${generatorMessage.type === 'success' ? 'bg-green-600/30 text-green-300 border border-green-500' : 'bg-red-600/30 text-red-300 border border-red-500'}`}>
-                {generatorMessage.text}
-              </div>
-            )}
             <Button
               type="button"
               variant="primary"
               onClick={handleGenerateDetails}
               isLoading={isGeneratingDetails}
               loadingText={VIETNAMESE.generatingWorldDetails}
-              className="mt-2 bg-purple-600 hover:bg-purple-700 focus:ring-purple-500 w-full sm:w-auto"
+              className="mt-3 bg-purple-600 hover:bg-purple-700 focus:ring-purple-500 w-full sm:w-auto"
             >
               {VIETNAMESE.generateDetailsFromStoryButton}
             </Button>
-            {isGeneratingDetails && <Spinner size="sm" className="inline-block ml-3" />}
           </fieldset>
           
+          {/* Fanfiction Story Generator Section */}
+          <fieldset className="border border-green-700 p-4 rounded-md bg-green-900/10">
+            <legend className="text-xl font-semibold text-green-400 px-2">{VIETNAMESE.fanficStoryGeneratorSection}</legend>
+            <div className="mt-2">
+              <label className="block text-sm font-medium text-gray-300 mb-2">{VIETNAMESE.fanficSourceTypeLabel}</label>
+              <div className="flex space-x-4 mb-3">
+                <label className="flex items-center text-gray-200">
+                  <input type="radio" name="fanficSourceType" value="name" checked={fanficSourceType === 'name'} onChange={() => { setFanficSourceType('name'); setGeneratorMessage(null); }} className="h-4 w-4 text-green-500 focus:ring-green-400 border-gray-600 bg-gray-700"/>
+                  <span className="ml-2">{VIETNAMESE.fanficSourceTypeName}</span>
+                </label>
+                <label className="flex items-center text-gray-200">
+                  <input type="radio" name="fanficSourceType" value="file" checked={fanficSourceType === 'file'} onChange={() => { setFanficSourceType('file'); setGeneratorMessage(null); }} className="h-4 w-4 text-green-500 focus:ring-green-400 border-gray-600 bg-gray-700"/>
+                  <span className="ml-2">{VIETNAMESE.fanficSourceTypeFile}</span>
+                </label>
+              </div>
+
+              {fanficSourceType === 'name' && (
+                <InputField
+                  label={VIETNAMESE.fanficStoryNameLabel}
+                  id="fanficStoryName"
+                  value={fanficStoryName}
+                  onChange={(e) => { setFanficStoryName(e.target.value); if (generatorMessage) setGeneratorMessage(null);}}
+                  placeholder={VIETNAMESE.fanficStoryNamePlaceholder}
+                />
+              )}
+              {fanficSourceType === 'file' && (
+                <div>
+                  <label htmlFor="fanficFile" className="block text-sm font-medium text-gray-300 mb-1">{VIETNAMESE.fanficFileUploadLabel}</label>
+                  <input
+                    type="file"
+                    id="fanficFile"
+                    ref={fanficFileInputRef}
+                    accept=".txt,text/plain"
+                    onChange={handleFanficFileChange}
+                    className="w-full text-sm text-gray-300 bg-gray-700 border border-gray-600 rounded-md file:mr-3 file:py-2 file:px-3 file:rounded-l-md file:border-0 file:text-sm file:font-semibold file:bg-green-600 file:text-white hover:file:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                  />
+                  {isLoadingTokens && <Spinner size="sm" text={VIETNAMESE.tokenCountCalculating} className="mt-2" />}
+                </div>
+              )}
+               <InputField
+                  label={VIETNAMESE.fanficPlayerDescriptionLabel}
+                  id="fanficPlayerDescription"
+                  value={fanficPlayerDescription}
+                  onChange={(e) => { setFanficPlayerDescription(e.target.value); if (generatorMessage) setGeneratorMessage(null);}}
+                  textarea
+                  rows={2}
+                  placeholder={VIETNAMESE.fanficPlayerDescriptionPlaceholder}
+                  className="mt-3"
+                />
+              <Button
+                type="button"
+                variant="primary"
+                onClick={handleGenerateFanficDetails}
+                isLoading={isGeneratingFanficDetails}
+                loadingText={VIETNAMESE.generatingFanficDetails}
+                className="mt-3 bg-green-600 hover:bg-green-700 focus:ring-green-500 w-full sm:w-auto"
+                disabled={isLoadingTokens || (fanficSourceType === 'file' && fanficTokenCount !== null && fanficTokenCount > MAX_TOKENS_FANFIC)}
+              >
+                {VIETNAMESE.generateFanficButton}
+              </Button>
+            </div>
+          </fieldset>
+          
+           {/* Generator Message Display (Shared for both generators) */}
+           {generatorMessage && (
+            <div className={`my-3 p-3 text-sm rounded-md border ${
+                generatorMessage.type === 'success' ? 'bg-green-600/20 text-green-300 border-green-500' :
+                generatorMessage.type === 'error' ? 'bg-red-600/20 text-red-300 border-red-500' :
+                'bg-blue-600/20 text-blue-300 border-blue-500' // info
+            }`}>
+              {generatorMessage.text}
+            </div>
+          )}
+
+
           {/* Character Info */}
           <fieldset className="border border-gray-700 p-4 rounded-md">
             <legend className="text-xl font-semibold text-indigo-400 px-2">Thông Tin Nhân Vật</legend>
@@ -297,7 +473,7 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
           <fieldset className="border border-gray-700 p-4 rounded-md">
             <legend className="text-xl font-semibold text-indigo-400 px-2">{VIETNAMESE.startingSkillsSection}</legend>
             {settings.startingSkills.map((skill, index) => (
-              <div key={`skill-${index}-${skill.name}`} className="p-3 border border-gray-600 rounded-md my-3 bg-gray-800/50 relative">
+              <div key={`skill-${index}-${skill.name || index}`} className="p-3 border border-gray-600 rounded-md my-3 bg-gray-800/50 relative">
                 <InputField 
                   label={`${VIETNAMESE.skillNameLabel} #${index + 1}`} 
                   id={`skillName-${index}`} 
@@ -329,7 +505,7 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
           <fieldset className="border border-gray-700 p-4 rounded-md">
             <legend className="text-xl font-semibold text-indigo-400 px-2">{VIETNAMESE.startingItemsSection}</legend>
             {settings.startingItems.map((item, index) => (
-              <div key={`item-${index}-${item.name}`} className="p-3 border border-gray-600 rounded-md my-3 bg-gray-800/50 relative">
+              <div key={`item-${index}-${item.name || index}`} className="p-3 border border-gray-600 rounded-md my-3 bg-gray-800/50 relative">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4">
                   <InputField 
                     label={`${VIETNAMESE.itemNameLabel} #${index + 1}`} id={`itemName-${index}`} 
@@ -388,7 +564,7 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
           <fieldset className="border border-gray-700 p-4 rounded-md">
             <legend className="text-xl font-semibold text-indigo-400 px-2">{VIETNAMESE.startingNPCsSection}</legend>
             {settings.startingNPCs.map((npc, index) => (
-              <div key={`npc-${index}-${npc.name}`} className="p-3 border border-gray-600 rounded-md my-3 bg-gray-800/50 relative">
+              <div key={`npc-${index}-${npc.name || index}`} className="p-3 border border-gray-600 rounded-md my-3 bg-gray-800/50 relative">
                 <InputField 
                   label={`${VIETNAMESE.npcNameLabel} #${index + 1}`} 
                   id={`npcName-${index}`} 
@@ -449,7 +625,7 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
           <fieldset className="border border-gray-700 p-4 rounded-md">
             <legend className="text-xl font-semibold text-indigo-400 px-2">{VIETNAMESE.startingLoreSection}</legend>
             {settings.startingLore.map((lore, index) => (
-              <div key={`lore-${index}-${lore.title}`} className="p-3 border border-gray-600 rounded-md my-3 bg-gray-800/50 relative">
+              <div key={`lore-${index}-${lore.title || index}`} className="p-3 border border-gray-600 rounded-md my-3 bg-gray-800/50 relative">
                 <InputField 
                   label={`${VIETNAMESE.loreTitleLabel} #${index + 1}`} 
                   id={`loreTitle-${index}`} 

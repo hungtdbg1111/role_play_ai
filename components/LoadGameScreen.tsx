@@ -1,39 +1,70 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { GameScreen, SaveGameMeta, FirebaseUser } from '../types';
+import { GameScreen, SaveGameMeta, FirebaseUser, StorageType } from '../types';
 import Button from './ui/Button';
 import Spinner from './ui/Spinner';
 import { VIETNAMESE } from '../constants';
 import { loadGamesFromFirestore, deleteGameFromFirestore } from '../services/firebaseService';
+import { loadGamesFromIndexedDB, deleteGameFromIndexedDB } from '../services/indexedDBService';
+
+// Helper function to format bytes
+function formatBytes(bytes: number | undefined, decimals: number = 2): string {
+  if (bytes === undefined || bytes === null || bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  if (i < 0 || i >= sizes.length) return '0 Bytes'; // Handle edge cases like log(negative) or very small numbers
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+}
 
 interface LoadGameScreenProps {
   setCurrentScreen: (screen: GameScreen) => void;
-  firebaseUser: FirebaseUser; // User must be authenticated to see this screen
-  onLoadGame: (saveId: string) => Promise<void>;
+  firebaseUser: FirebaseUser | null; // Nullable if local storage doesn't require auth
+  onLoadGame: (saveId: string) => Promise<void>; // App.tsx handles backend routing
   notify: (message: string, type: 'success' | 'error') => void;
+  storageType: StorageType;
 }
 
-const LoadGameScreen: React.FC<LoadGameScreenProps> = ({ setCurrentScreen, firebaseUser, onLoadGame, notify }) => {
+const LoadGameScreen: React.FC<LoadGameScreenProps> = ({ 
+  setCurrentScreen, 
+  firebaseUser, 
+  onLoadGame, 
+  notify,
+  storageType 
+}) => {
   const [saveSlots, setSaveSlots] = useState<SaveGameMeta[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [actionInProgress, setActionInProgress] = useState<string | null>(null); // 'load-id' or 'delete-id'
+  const [actionInProgress, setActionInProgress] = useState<string | null>(null);
 
   const fetchSaveGames = useCallback(async () => {
-    if (!firebaseUser) return;
     setIsLoading(true);
     setError(null);
     try {
-      const fetchedSaves = await loadGamesFromFirestore(firebaseUser.uid);
+      let fetchedSaves: SaveGameMeta[] = [];
+      if (storageType === 'cloud') {
+        if (!firebaseUser) {
+          setError(VIETNAMESE.signInRequiredForLoad);
+          notify(VIETNAMESE.signInRequiredForLoad, 'error');
+          setIsLoading(false);
+          setCurrentScreen(GameScreen.Initial); // Redirect if not signed in for cloud
+          return;
+        }
+        fetchedSaves = await loadGamesFromFirestore(firebaseUser.uid);
+      } else { // 'local'
+        fetchedSaves = await loadGamesFromIndexedDB();
+      }
       setSaveSlots(fetchedSaves);
     } catch (e) {
       console.error("Error fetching save games:", e);
-      setError(VIETNAMESE.errorLoadingGame + (e instanceof Error ? `: ${e.message}` : ''));
-      notify(VIETNAMESE.errorLoadingGame, 'error');
+      const errorMsg = VIETNAMESE.errorLoadingGame + (e instanceof Error ? `: ${e.message}` : '');
+      setError(errorMsg);
+      notify(errorMsg, 'error');
     } finally {
       setIsLoading(false);
     }
-  }, [firebaseUser, notify]);
+  }, [firebaseUser, storageType, notify, setCurrentScreen]);
 
   useEffect(() => {
     fetchSaveGames();
@@ -42,10 +73,10 @@ const LoadGameScreen: React.FC<LoadGameScreenProps> = ({ setCurrentScreen, fireb
   const handleLoad = async (saveId: string) => {
     setActionInProgress(`load-${saveId}`);
     try {
-      await onLoadGame(saveId);
-      // App.tsx will navigate to GameplayScreen after successful load
+      await onLoadGame(saveId); // App.tsx handles which backend to use
     } catch (e) {
-      console.error(`Error loading game ${saveId}:`, e);
+      // Error should be handled by App.tsx's onLoadGame, but catch here just in case
+      console.error(`Error initiating load for game ${saveId}:`, e);
       notify(VIETNAMESE.errorLoadingGame + (e instanceof Error ? `: ${e.message}` : ''), 'error');
     } finally {
       setActionInProgress(null);
@@ -58,9 +89,18 @@ const LoadGameScreen: React.FC<LoadGameScreenProps> = ({ setCurrentScreen, fireb
     }
     setActionInProgress(`delete-${saveId}`);
     try {
-      await deleteGameFromFirestore(firebaseUser.uid, saveId);
+      if (storageType === 'cloud') {
+        if (!firebaseUser) {
+          notify(VIETNAMESE.signInRequiredForLoad, 'error'); // Should not happen if UI is correct
+          setActionInProgress(null);
+          return;
+        }
+        await deleteGameFromFirestore(firebaseUser.uid, saveId);
+      } else { // 'local'
+        await deleteGameFromIndexedDB(saveId);
+      }
       notify(VIETNAMESE.gameDeletedSuccess, 'success');
-      setSaveSlots(prevSlots => prevSlots.filter(slot => slot.id !== saveId)); // Optimistic update
+      setSaveSlots(prevSlots => prevSlots.filter(slot => slot.id !== saveId));
     } catch (e) {
       console.error(`Error deleting game ${saveId}:`, e);
       notify(VIETNAMESE.errorDeletingGame + (e instanceof Error ? `: ${e.message}` : ''), 'error');
@@ -81,7 +121,7 @@ const LoadGameScreen: React.FC<LoadGameScreenProps> = ({ setCurrentScreen, fireb
       <div className="w-full max-w-2xl bg-gray-900 shadow-2xl rounded-xl p-6 sm:p-8">
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-sky-500 to-indigo-600">
-            {VIETNAMESE.loadGameScreenTitle}
+            {VIETNAMESE.loadGameScreenTitle} ({storageType === 'local' ? 'Cục Bộ' : 'Đám Mây'})
           </h2>
           <Button variant="ghost" onClick={() => setCurrentScreen(GameScreen.Initial)}>
             {VIETNAMESE.goBackButton}
@@ -89,7 +129,7 @@ const LoadGameScreen: React.FC<LoadGameScreenProps> = ({ setCurrentScreen, fireb
         </div>
 
         {isLoading && <Spinner text="Đang tải danh sách lưu..." className="my-8" />}
-        {error && <p className="text-red-400 bg-red-900 p-3 rounded-md text-center my-4">{error}</p>}
+        {error && <p className="text-red-400 bg-red-900/50 p-3 rounded-md text-center my-4 border border-red-700">{error}</p>}
         
         {!isLoading && !error && saveSlots.length === 0 && (
           <p className="text-gray-400 italic text-center py-8">{VIETNAMESE.noSaveGamesFound}</p>
@@ -98,12 +138,17 @@ const LoadGameScreen: React.FC<LoadGameScreenProps> = ({ setCurrentScreen, fireb
         {!isLoading && !error && saveSlots.length > 0 && (
           <div className="space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar pr-2">
             {saveSlots.map((slot) => (
-              <div key={slot.id} className="bg-gray-800 p-4 rounded-lg shadow-md flex flex-col sm:flex-row justify-between items-center gap-3">
+              <div key={slot.id} className="bg-gray-800 p-4 rounded-lg shadow-md flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 hover:bg-gray-750 transition-colors duration-150">
                 <div className="flex-grow">
                   <p className="text-lg font-semibold text-indigo-300">{slot.name}</p>
-                  <p className="text-xs text-gray-400">{VIETNAMESE.lastSaved}: {formatDate(slot.timestamp)}</p>
+                  <div className="text-xs text-gray-400">
+                    <span>{VIETNAMESE.lastSaved}: {formatDate(slot.timestamp)}</span>
+                    {slot.size !== undefined && (
+                      <span className="ml-3 pl-3 border-l border-gray-600">{VIETNAMESE.fileSizeLabel}: {formatBytes(slot.size)}</span>
+                    )}
+                  </div>
                 </div>
-                <div className="flex space-x-2 flex-shrink-0 mt-3 sm:mt-0">
+                <div className="flex space-x-2 flex-shrink-0 mt-3 sm:mt-0 self-center sm:self-auto">
                   <Button 
                     variant="primary" 
                     size="sm"

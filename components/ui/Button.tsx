@@ -6,6 +6,7 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   size?: 'sm' | 'md' | 'lg';
   isLoading?: boolean;
   loadingText?: string;
+  customStyles?: React.CSSProperties; // New prop for inline styles
 }
 
 const Button: React.FC<ButtonProps> = ({
@@ -15,6 +16,7 @@ const Button: React.FC<ButtonProps> = ({
   size = 'md',
   isLoading = false,
   loadingText = "Đang tải...",
+  customStyles, // Destructure new prop
   ...props
 }) => {
   const baseStyle = 'font-semibold rounded-lg focus:outline-none focus:ring-2 focus:ring-opacity-75 transition-all duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center';
@@ -36,6 +38,7 @@ const Button: React.FC<ButtonProps> = ({
     <button
       className={`${baseStyle} ${variantStyles[variant]} ${sizeStyles[size]} ${className}`}
       disabled={isLoading || props.disabled}
+      style={customStyles} // Apply customStyles here
       {...props}
     >
       {isLoading && (

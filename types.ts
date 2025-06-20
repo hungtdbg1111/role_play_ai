@@ -1,7 +1,7 @@
 
-
 import type { User as FirebaseUserType } from 'firebase/auth';
 import { HarmCategory, HarmBlockThreshold } from "@google/genai"; 
+import * as GameTemplates from './templates'; // Import all templates
 
 export enum GameScreen {
   Initial = 'Initial',
@@ -9,9 +9,28 @@ export enum GameScreen {
   Gameplay = 'Gameplay',
   ApiSettings = 'ApiSettings',
   LoadGameSelection = 'LoadGameSelection', 
+  StorageSettings = 'StorageSettings', 
+  ImportExport = 'ImportExport', 
 }
 
 export type FirebaseUser = FirebaseUserType;
+
+export type StorageType = 'local' | 'cloud';
+
+export interface FirebaseUserConfig {
+  apiKey: string;
+  authDomain: string;
+  projectId: string;
+  storageBucket: string;
+  messagingSenderId: string;
+  appId: string;
+  measurementId?: string; 
+}
+
+export interface StorageSettings {
+  storageType: StorageType;
+  firebaseUserConfig: FirebaseUserConfig | null; 
+}
 
 export interface PlayerStats {
   hp: number;
@@ -28,29 +47,17 @@ export interface PlayerStats {
   turn: number;
 }
 
-export interface Item {
-  id: string;
-  name: string;
-  type: string; 
-  description: string;
-  effect?: string; 
-  quantity: number;
-  usable?: boolean;
-  consumable?: boolean;
-  slot?: string; 
-  statsBonus?: Partial<PlayerStats>;
-}
+// Use the new InventoryItem union from templates.ts as the primary Item type
+export type Item = GameTemplates.InventoryItem;
+// Use the new SkillTemplate from templates.ts as the primary Skill type
+export type Skill = GameTemplates.SkillTemplate;
+// Use the new NPCTemplate from templates.ts as the primary NPC type
+export type NPC = GameTemplates.NPCTemplate;
+// Use the new LocationTemplate from templates.ts as the primary GameLocation type
+export type GameLocation = GameTemplates.LocationTemplate;
+// Define Faction type using FactionTemplate
+export type Faction = GameTemplates.FactionTemplate;
 
-export interface Skill {
-  id: string;
-  name: string;
-  type: string; 
-  description: string;
-  manaCost?: number;
-  cooldown?: number;
-  currentCooldown?: number;
-  effect: string;
-}
 
 export interface QuestObjective {
   id: string;
@@ -66,23 +73,7 @@ export interface Quest {
   objectives: QuestObjective[];
 }
 
-export interface NPC {
-  id: string;
-  name: string;
-  description?: string; 
-  hp?: number;
-  atk?: number;
-  // Affinity is not a direct field in the game's NPC struct,
-  // but initial affinity from setup can be part of description for AI.
-}
-
-export interface GameLocation {
-  id: string;
-  name: string;
-  description: string; 
-}
-
-export interface Companion {
+export interface Companion { // Companion can remain simpler or also be templated later
   id: string;
   name: string;
   description: string;
@@ -99,23 +90,24 @@ export interface WorldLoreEntry {
   content: string;
 }
 
+// Starting entities remain simple for AI generation, game logic can map them to richer templates
 export interface StartingSkill {
   name: string;
-  description: string;
+  description: string; // AI provides this, game can map to a full SkillTemplate
 }
 
 export interface StartingItem {
   name: string;
   description: string;
   quantity: number;
-  type: string;
+  type: string; // AI provides a general type, game can map to ItemCategory and specific item type
 }
 
 export interface StartingNPC {
   name: string;
-  personality: string;
-  initialAffinity: number; // e.g., 0-100
-  details: string;
+  personality: string; // AI provides this
+  initialAffinity: number; 
+  details: string; // AI provides this
 }
 
 export interface StartingLore {
@@ -142,18 +134,28 @@ export interface WorldSettings {
   nsfwMode?: boolean; 
 }
 
+export interface TurnHistoryEntry {
+  knowledgeBaseSnapshot: KnowledgeBase; // Snapshot of KB *before* this turn's action was processed
+  gameMessagesSnapshot: GameMessage[];  // Snapshot of messages *before* this turn's action was processed
+}
+
 export interface KnowledgeBase {
   playerStats: PlayerStats;
-  inventory: Item[];
-  playerSkills: Skill[];
+  inventory: Item[]; // Now uses the new rich Item type (InventoryItem union)
+  playerSkills: Skill[]; // Now uses SkillTemplate
   allQuests: Quest[]; 
-  discoveredNPCs: NPC[];
-  discoveredLocations: GameLocation[];
+  discoveredNPCs: NPC[]; // Now uses NPCTemplate
+  discoveredLocations: GameLocation[]; // Now uses LocationTemplate
+  discoveredFactions: Faction[]; // New field for factions
   realmProgressionList: string[];
   worldConfig: WorldSettings | null;
   companions: Companion[];
   worldLore: WorldLoreEntry[];
   appVersion?: string; 
+  pageSummaries?: Record<number, string>;
+  currentPageHistory?: number[];
+  lastSummarizedTurn?: number;
+  turnHistory?: TurnHistoryEntry[]; // For rollback functionality
 }
 
 export interface AiChoice {
@@ -163,11 +165,12 @@ export interface AiChoice {
 
 export interface GameMessage {
   id: string;
-  type: 'narration' | 'choice' | 'system' | 'player_action' | 'error';
+  type: 'narration' | 'choice' | 'system' | 'player_action' | 'error' | 'page_summary';
   content: string;
   timestamp: number;
   choices?: AiChoice[];
   isPlayerInput?: boolean; 
+  turnNumber: number;
 }
 
 export interface ParsedAiResponse {
@@ -183,8 +186,8 @@ export interface SafetySetting {
 }
 
 export interface ApiConfig {
-  apiKeySource: 'system' | 'user'; // Added: Specifies the source of the API key
-  userApiKey: string;             // Changed: Stores user's API key if apiKeySource is 'user'
+  apiKeySource: 'system' | 'user'; 
+  userApiKey: string;             
   model: string;
   safetySettings?: SafetySetting[]; 
 }
@@ -195,14 +198,30 @@ export interface SaveGameData {
   timestamp: any; 
   knowledgeBase: KnowledgeBase; 
   gameMessages: GameMessage[];
-  appVersion?: string; 
+  appVersion?: string;
 }
 
 export interface SaveGameMeta {
     id: string;
     name: string;
     timestamp: Date; 
+    size?: number; // Estimated size in bytes
 }
 
 export type PlayerActionInputType = 'action' | 'story';
 export type ResponseLength = 'default' | 'short' | 'medium' | 'long';
+
+// Gameplay Style Settings
+export interface StyleSettingProperty {
+  fontFamily?: string;
+  fontSize?: string;
+  textColor: string;
+  backgroundColor?: string;
+}
+
+export interface StyleSettings {
+  narration: StyleSettingProperty;
+  playerAction: StyleSettingProperty;
+  choiceButton: StyleSettingProperty;
+  keywordHighlight: StyleSettingProperty; // New
+}

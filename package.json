@@ -1,5 +1,5 @@
 {
-  "name": "đạo-đồ-a.i",
+  "name": "role-play-ai",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,8 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
     "@google/genai": "^1.5.1",
     "firebase/app": "latest",
     "firebase/auth": "latest",

@@ -1,8 +1,8 @@
 
 
-import { GoogleGenAI, GenerateContentResponse, HarmCategory, HarmBlockThreshold } from "@google/genai"; 
-import { KnowledgeBase, ParsedAiResponse, AiChoice, WorldSettings, ApiConfig, SafetySetting, PlayerActionInputType, ResponseLength, StartingSkill, StartingItem, StartingNPC, StartingLore } from '../types'; 
-import { PROMPT_TEMPLATES, VIETNAMESE, API_SETTINGS_STORAGE_KEY, DEFAULT_MODEL_ID, HARM_CATEGORIES, DEFAULT_API_CONFIG, GeneratedWorldElements } from '../constants'; 
+import { GoogleGenAI, GenerateContentResponse, HarmCategory, HarmBlockThreshold, CountTokensResponse } from "@google/genai"; 
+import { KnowledgeBase, ParsedAiResponse, AiChoice, WorldSettings, ApiConfig, SafetySetting, PlayerActionInputType, ResponseLength, StartingSkill, StartingItem, StartingNPC, StartingLore, GameMessage } from '../types'; 
+import { PROMPT_TEMPLATES, VIETNAMESE, API_SETTINGS_STORAGE_KEY, DEFAULT_MODEL_ID, HARM_CATEGORIES, DEFAULT_API_CONFIG, GeneratedWorldElements, MAX_TOKENS_FANFIC } from '../constants'; 
 
 let ai: GoogleGenAI | null = null;
 let lastUsedEffectiveApiKey: string | null = null; 
@@ -43,16 +43,14 @@ const getAiClient = (): GoogleGenAI => {
   let effectiveApiKey: string;
 
   if (settings.apiKeySource === 'system') {
-    // Per guidelines, assume process.env.API_KEY is pre-configured, valid, and accessible.
-    // If it's not actually available in the environment, new GoogleGenAI() will throw,
-    // and this will be caught by callGeminiAPI.
-    if (typeof process.env.API_KEY !== 'string' || process.env.API_KEY.trim() === '') {
-        // This case should ideally not be hit if environment is set up as assumed.
-        // If it is, it means the assumption is broken.
-        console.error("System API Key is selected, but process.env.API_KEY is not available or empty.");
-        throw new Error(VIETNAMESE.apiKeySystemUnavailable);
+    // Prioritize GEMINI_API_KEY, then API_KEY from process.env
+    const systemApiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+
+    if (typeof systemApiKey !== 'string' || systemApiKey.trim() === '') {
+        console.error("System API Key is selected, but neither process.env.GEMINI_API_KEY nor process.env.API_KEY is available or empty.");
+        throw new Error(VIETNAMESE.apiKeySystemUnavailable + " (GEMINI_API_KEY or API_KEY not found in environment)");
     }
-    effectiveApiKey = process.env.API_KEY;
+    effectiveApiKey = systemApiKey;
   } else { // 'user'
     if (!settings.userApiKey) {
       console.error("User API Key is selected but not configured. Please set it in API Settings.");
@@ -61,16 +59,15 @@ const getAiClient = (): GoogleGenAI => {
     effectiveApiKey = settings.userApiKey;
   }
   
-  if (!ai || lastUsedApiKeySource !== settings.apiKeySource || (settings.apiKeySource === 'user' && lastUsedEffectiveApiKey !== effectiveApiKey)) {
+  if (!ai || lastUsedApiKeySource !== settings.apiKeySource || (settings.apiKeySource === 'user' && lastUsedEffectiveApiKey !== effectiveApiKey) || (settings.apiKeySource === 'system' && lastUsedEffectiveApiKey !== effectiveApiKey)) {
     try {
       ai = new GoogleGenAI({ apiKey: effectiveApiKey });
-      lastUsedEffectiveApiKey = settings.apiKeySource === 'user' ? effectiveApiKey : null; 
+      lastUsedEffectiveApiKey = effectiveApiKey; 
       lastUsedApiKeySource = settings.apiKeySource;
     } catch (initError) {
         console.error("Failed to initialize GoogleGenAI client:", initError);
-        // Propagate a user-friendly error or a specific error type
         if (settings.apiKeySource === 'system') {
-            throw new Error(`${VIETNAMESE.apiKeySystemUnavailable} Details: ${initError instanceof Error ? initError.message : String(initError)}`);
+            throw new Error(`${VIETNAMESE.apiKeySystemUnavailable} Details: ${initError instanceof Error ? initError.message : String(initError)} (Using system key: ${process.env.GEMINI_API_KEY ? 'GEMINI_API_KEY' : 'API_KEY'})`);
         } else {
             throw new Error(`Lỗi khởi tạo API Key người dùng: ${initError instanceof Error ? initError.message : String(initError)}`);
         }
@@ -79,58 +76,58 @@ const getAiClient = (): GoogleGenAI => {
   return ai;
 };
 
-// This parser is for general game state tags like CHOICE, MESSAGE, STATS_UPDATE, etc.
 export const parseAiResponseText = (responseText: string): ParsedAiResponse => {
-  const tags: string[] = [];
-  const choices: AiChoice[] = [];
   let narration = responseText;
+  const choices: AiChoice[] = [];
+  const gameStateTags: string[] = []; // Tags like STATS_UPDATE, ITEM_ACQUIRED etc.
   let systemMessage: string | undefined;
 
-  // Regex specifically for game state tags (not GENERATED_ tags)
-  const tagRegex = /\[(?!GENERATED_)([^:]+?:\s*.*?|[^:]*?)\]/g;
-  let match;
-  let mutableNarration = narration;
+  // Regex to find any [...] tag and its content
+  const allTagsRegex = /\[(.*?)\]/g;
+  const foundRawTags: {fullTag: string, content: string}[] = [];
+  let tempMatch;
+  while ((tempMatch = allTagsRegex.exec(responseText)) !== null) {
+    foundRawTags.push({fullTag: tempMatch[0], content: tempMatch[1].trim()});
+  }
 
-  while ((match = tagRegex.exec(responseText)) !== null) {
-    const fullTag = match[0];
-    const tagContent = match[1]; // Content inside brackets, excluding GENERATED_ tags
+  for (const tagInfo of foundRawTags) {
+    const { fullTag, content } = tagInfo;
+    
+    // Attempt to remove the tag from narration text.
+    // This simple replace might be problematic if the same tag appears multiple times.
+    // A more robust solution would involve replacing based on indices or unique IDs if possible.
+    // For now, this is a common approach but be mindful of its limitations.
+    if (narration.includes(fullTag)) {
+        narration = narration.replace(fullTag, '');
+    }
 
-    if (tagContent.startsWith('CHOICE:')) {
+    const upperContent = content.toUpperCase();
+
+    if (upperContent.startsWith('CHOICE:')) {
       try {
-        const choiceText = tagContent.substring('CHOICE:'.length).trim().replace(/^"|"$/g, '');
-        choices.push({ text: choiceText });
-        mutableNarration = mutableNarration.replace(fullTag, '').trim();
+        const choiceText = content.substring('CHOICE:'.length).trim().replace(/^"|"$/g, '');
+        if (choiceText) { // Ensure choice text is not empty
+            choices.push({ text: choiceText });
+        }
       } catch (e) {
-        console.warn("Could not parse CHOICE tag content:", tagContent);
+        console.warn("Could not parse CHOICE tag content:", content, e);
       }
-    } else if (tagContent.startsWith('MESSAGE:')) {
+    } else if (upperContent.startsWith('MESSAGE:')) {
       try {
-        systemMessage = tagContent.substring('MESSAGE:'.length).trim().replace(/^"|"$/g, '');
-        mutableNarration = mutableNarration.replace(fullTag, '').trim();
+        systemMessage = content.substring('MESSAGE:'.length).trim().replace(/^"|"$/g, '');
       } catch (e) {
-        console.warn("Could not parse MESSAGE tag content:", tagContent);
+        console.warn("Could not parse MESSAGE tag content:", content, e);
       }
-    } else if (!tagContent.startsWith('GENERATED_')) { // Ensure it's not a GENERATED tag
-      tags.push(fullTag);
-      mutableNarration = mutableNarration.replace(fullTag, '').trim();
+    } else if (!upperContent.startsWith('GENERATED_')) { 
+      // This is a game state tag if not CHOICE, MESSAGE, or GENERATED_
+      gameStateTags.push(fullTag);
     }
   }
 
-  narration = mutableNarration.replace(/\n\n+/g, '\n').trim();
+  // Clean up narration: remove extra newlines and trim whitespace
+  narration = narration.replace(/\n\s*\n/g, '\n').trim(); 
 
-  // Add all original tags (including GENERATED_ ones if any were passed, though they shouldn't be by design)
-  // back for debugging or further specific processing if needed.
-  // The primary goal here is that `parseAiResponseText` correctly extracts narration, choices, and game-state tags.
-  const allOriginalTagsRegex = /\[(.*?)\]/g;
-  let originalTagMatch;
-  const allOriginalTags : string[] = [];
-   while ((originalTagMatch = allOriginalTagsRegex.exec(responseText)) !== null) {
-       if (!originalTagMatch[1].startsWith('CHOICE:') && !originalTagMatch[1].startsWith('MESSAGE:')) {
-           allOriginalTags.push(originalTagMatch[0]);
-       }
-   }
-  
-  return { narration, choices, tags: allOriginalTags, systemMessage };
+  return { narration, choices, tags: gameStateTags, systemMessage };
 };
 
 
@@ -141,8 +138,8 @@ const parseTagParams = (paramString: string): Record<string, string> => {
     let match;
     while ((match = paramRegex.exec(paramString)) !== null) {
         const key = match[1].trim();
-        let value = match[2] !== undefined ? match[2].replace(/\\"/g, '"') : // Handle escaped quotes within double-quoted strings
-                    match[3] !== undefined ? match[3].replace(/\\'/g, "'") : // Handle escaped quotes within single-quoted strings
+        let value = match[2] !== undefined ? match[2].replace(/\\"/g, '"') : 
+                    match[3] !== undefined ? match[3].replace(/\\'/g, "'") : 
                     match[4] !== undefined ? match[4].trim() : '';
         params[key] = value;
     }
@@ -256,10 +253,13 @@ export const parseGeneratedWorldDetails = (responseText: string): GeneratedWorld
 };
 
 
-export const callGeminiAPI = async (prompt: string): Promise<string> => { // Returns raw text
+export const callGeminiAPI = async (
+  prompt: string, 
+  onPromptConstructed?: (constructedPrompt: string) => void
+): Promise<string> => { 
   let client: GoogleGenAI;
   try {
-    client = getAiClient(); // This can throw if API key is misconfigured
+    client = getAiClient(); 
   } catch (clientError) {
     console.error("Error obtaining AI client:", clientError);
     const errorMessage = clientError instanceof Error ? clientError.message : String(clientError);
@@ -268,6 +268,10 @@ export const callGeminiAPI = async (prompt: string): Promise<string> => { // Ret
   
   const { model: configuredModel, safetySettings } = getApiSettings(); 
   
+  if (onPromptConstructed) {
+    onPromptConstructed(prompt);
+  }
+
   try {
     const response: GenerateContentResponse = await client.models.generateContent({
       model: configuredModel,
@@ -282,7 +286,7 @@ export const callGeminiAPI = async (prompt: string): Promise<string> => { // Ret
     if (!responseText) {
       throw new Error("AI response was empty.");
     }
-    return responseText; // Return raw text
+    return responseText; 
 
   } catch (error) {
     console.error("Error calling Gemini API:", error);
@@ -305,26 +309,101 @@ export const callGeminiAPI = async (prompt: string): Promise<string> => { // Ret
   }
 };
 
-export const generateInitialStory = async (worldConfig: WorldSettings): Promise<ParsedAiResponse> => {
+export const generateInitialStory = async (
+  worldConfig: WorldSettings,
+  onPromptConstructed?: (prompt: string) => void
+): Promise<{response: ParsedAiResponse, rawText: string}> => {
   const prompt = PROMPT_TEMPLATES.initial(worldConfig);
-  const rawText = await callGeminiAPI(prompt);
+  const rawText = await callGeminiAPI(prompt, onPromptConstructed);
   const parsedResponse = parseAiResponseText(rawText);
-  // Add the raw response to tags for debugging in App.tsx
-  parsedResponse.tags.push(`[DEBUG_RAW_AI_RESPONSE: "${rawText.replace(/"/g, '\\"') }"]`);
-  return parsedResponse;
+  return {response: parsedResponse, rawText};
 };
 
-export const generateNextTurn = async (knowledgeBase: KnowledgeBase, playerAction: string, inputType: PlayerActionInputType, responseLength: ResponseLength): Promise<ParsedAiResponse> => {
-  const prompt = PROMPT_TEMPLATES.continue(knowledgeBase, playerAction, inputType, responseLength);
-  const rawText = await callGeminiAPI(prompt);
+export const generateNextTurn = async (
+  knowledgeBase: KnowledgeBase, 
+  playerAction: string, 
+  inputType: PlayerActionInputType, 
+  responseLength: ResponseLength,
+  currentPageMessagesLog: string, 
+  previousPageSummaries: string[],
+  lastNarrationFromPreviousPage?: string, // New parameter
+  onPromptConstructed?: (prompt: string) => void
+): Promise<{response: ParsedAiResponse, rawText: string}> => {
+  const prompt = PROMPT_TEMPLATES.continue(
+    knowledgeBase, 
+    playerAction, 
+    inputType, 
+    responseLength,
+    currentPageMessagesLog,
+    previousPageSummaries,
+    lastNarrationFromPreviousPage // Pass to template
+  );
+  const rawText = await callGeminiAPI(prompt, onPromptConstructed);
   const parsedResponse = parseAiResponseText(rawText);
-  parsedResponse.tags.push(`[DEBUG_RAW_AI_RESPONSE: "${rawText.replace(/"/g, '\\"') }"]`);
-  return parsedResponse;
+  return {response: parsedResponse, rawText};
 };
 
-export const generateWorldDetailsFromStory = async (storyIdea: string): Promise<GeneratedWorldElements> => {
+export const generateWorldDetailsFromStory = async (
+  storyIdea: string,
+  onPromptConstructed?: (prompt: string) => void
+): Promise<{response: GeneratedWorldElements, rawText: string}> => {
   const prompt = PROMPT_TEMPLATES.generateWorldDetails(storyIdea);
-  const rawText = await callGeminiAPI(prompt);
-  // console.log("Raw AI response for world details:", rawText); // For debugging
-  return parseGeneratedWorldDetails(rawText);
+  const rawText = await callGeminiAPI(prompt, onPromptConstructed);
+  const parsedResponse = parseGeneratedWorldDetails(rawText);
+  return {response: parsedResponse, rawText};
+};
+
+export const generateFanfictionWorldDetails = async (
+  sourceMaterial: string,
+  isSourceContent: boolean,
+  playerInputDescription?: string,
+  onPromptConstructed?: (prompt: string) => void
+): Promise<{response: GeneratedWorldElements, rawText: string}> => {
+  const prompt = PROMPT_TEMPLATES.generateFanfictionWorldDetails(sourceMaterial, isSourceContent, playerInputDescription);
+  const rawText = await callGeminiAPI(prompt, onPromptConstructed);
+  const parsedResponse = parseGeneratedWorldDetails(rawText); // Reuses the same parser
+  return {response: parsedResponse, rawText};
+};
+
+export const summarizeTurnHistory = async (
+  messagesToSummarize: GameMessage[],
+  worldTheme: string,
+  playerName: string,
+  onPromptConstructed?: (prompt: string) => void
+): Promise<string> => {
+  if (!messagesToSummarize || messagesToSummarize.length === 0) {
+    return "Không có diễn biến nào đáng kể trong trang này.";
+  }
+  const prompt = PROMPT_TEMPLATES.summarizePage(messagesToSummarize, worldTheme, playerName);
+  try {
+    const rawSummary = await callGeminiAPI(prompt, onPromptConstructed);
+    // Basic cleaning, remove potential markdown if AI wraps it
+    return rawSummary.replace(/```json\s*|\s*```/g, '').trim();
+  } catch (error) {
+    console.error("Error generating page summary:", error);
+    return `Lỗi tóm tắt trang: ${error instanceof Error ? error.message : "Không rõ"}`;
+  }
+};
+
+export const countTokens = async (text: string): Promise<number> => {
+  let client: GoogleGenAI;
+  try {
+    client = getAiClient();
+  } catch (clientError) {
+    console.error("Error obtaining AI client for token counting:", clientError);
+    throw new Error(`Lỗi API Client khi đếm token: ${clientError instanceof Error ? clientError.message : String(clientError)}`);
+  }
+
+  const { model: configuredModel } = getApiSettings();
+
+  try {
+    const response: CountTokensResponse = await client.models.countTokens({
+      model: configuredModel,
+      contents: text, 
+    });
+    return response.totalTokens;
+  } catch (error) {
+    console.error("Error counting tokens with Gemini API:", error);
+    throw new Error(`Lỗi khi đếm token bằng Gemini API: ${error instanceof Error ? error.message : String(error)}`);
+  }
 };

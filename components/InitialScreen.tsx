@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { GameScreen, FirebaseUser } from '../types';
 import Button from './ui/Button';
@@ -13,12 +14,9 @@ interface InitialScreenProps {
 const InitialScreen: React.FC<InitialScreenProps> = ({ setCurrentScreen, firebaseUser, onSignOut, isFirebaseLoading }) => {
   
   const handleLoadGameClick = () => {
-    if (firebaseUser) {
-      setCurrentScreen(GameScreen.LoadGameSelection);
-    } else {
-      // Optionally, prompt to sign in or wait for auto sign-in
-      alert(VIETNAMESE.signInRequiredForLoad);
-    }
+    // Decision to keep firebaseUser check for cloud saves, local saves won't strictly need it this way
+    // App.tsx will ultimately handle routing based on storage settings
+    setCurrentScreen(GameScreen.LoadGameSelection);
   };
 
   return (
@@ -42,10 +40,20 @@ const InitialScreen: React.FC<InitialScreenProps> = ({ setCurrentScreen, firebas
           size="lg" 
           className="w-full" 
           onClick={handleLoadGameClick}
-          disabled={isFirebaseLoading || !firebaseUser}
+          // Disabled if Firebase is loading AND no user, or if explicitly just loading (generic for storage)
+          disabled={isFirebaseLoading && !firebaseUser} 
           title={!firebaseUser && !isFirebaseLoading ? VIETNAMESE.signInRequiredForLoad : undefined}
         >
-          {isFirebaseLoading ? VIETNAMESE.signingInAnonymously : VIETNAMESE.loadGame}
+          {/* Text adapts if firebase is involved, otherwise generic load */}
+          {isFirebaseLoading && !firebaseUser ? VIETNAMESE.signingInAnonymously : VIETNAMESE.loadGame}
+        </Button>
+         <Button 
+            variant="ghost" 
+            size="md" 
+            className="w-full" 
+            onClick={() => setCurrentScreen(GameScreen.ImportExport)} // New Button
+          >
+          {VIETNAMESE.importExportData}
         </Button>
         <Button variant="ghost" size="md" className="w-full" disabled>
           {VIETNAMESE.gameUpdates}
@@ -58,19 +66,27 @@ const InitialScreen: React.FC<InitialScreenProps> = ({ setCurrentScreen, firebas
           >
           {VIETNAMESE.apiSettings}
         </Button>
-        {firebaseUser && (
+        <Button 
+            variant="ghost" 
+            size="md" 
+            className="w-full" 
+            onClick={() => setCurrentScreen(GameScreen.StorageSettings)} // Changed
+          >
+          {VIETNAMESE.storageSettings} 
+        </Button>
+        {firebaseUser && ( // Sign out kept for potential anonymous auth for Gemini or future cloud features
           <Button
             variant="ghost"
             size="sm"
             className="w-full mt-2 border-red-500 text-red-400 hover:bg-red-700 hover:text-white"
             onClick={onSignOut}
           >
-            {VIETNAMESE.signOutButton} ({VIETNAMESE.signedInAsGuest})
+            {VIETNAMESE.signOutButton} ({firebaseUser.isAnonymous ? VIETNAMESE.signedInAsGuest : firebaseUser.displayName || firebaseUser.email || VIETNAMESE.signedInAsGuest})
           </Button>
         )}
       </div>
-      {isFirebaseLoading && <p className="mt-4 text-sm text-gray-400">{VIETNAMESE.signingInAnonymously}</p>}
-      <p className="mt-12 text-sm text-gray-500">Một sản phẩm của trí tuệ nhân tạo và niềm đam mê tu tiên. Phiên bản {APP_VERSION}</p>
+      {isFirebaseLoading && !firebaseUser && <p className="mt-4 text-sm text-gray-400">{VIETNAMESE.signingInAnonymously}</p>}
+      <p className="mt-12 text-sm text-gray-500">Phiên bản {APP_VERSION}</p>
     </div>
   );
 };

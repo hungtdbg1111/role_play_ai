@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { Item, Skill, Quest, NPC, GameLocation, WorldLoreEntry, Companion } from '../../types';
 
@@ -10,16 +11,18 @@ interface KeywordSpanProps {
     entity: Item | Skill | Quest | NPC | GameLocation | WorldLoreEntry | Companion, 
     entityType: 'item' | 'skill' | 'quest' | 'npc' | 'location' | 'lore' | 'companion'
   ) => void;
+  style?: React.CSSProperties; // Added to accept dynamic styles
 }
 
-const KeywordSpan: React.FC<KeywordSpanProps> = ({ keyword, entityType, entity, onClick }) => {
+const KeywordSpan: React.FC<KeywordSpanProps> = ({ keyword, entityType, entity, onClick, style }) => {
   const handleClick = (event: React.MouseEvent<HTMLSpanElement>) => {
     onClick(event, entity, entityType);
   };
 
   return (
     <span
-      className="text-yellow-400 hover:text-yellow-300 underline cursor-pointer font-medium"
+      className="underline cursor-pointer font-medium" // Removed text-yellow-400 and hover:text-yellow-300
+      style={style} // Apply dynamic styles from props
       onClick={handleClick}
       role="button"
       tabIndex={0}

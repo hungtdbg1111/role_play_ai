@@ -1,6 +1,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Item, Skill, Quest, NPC, GameLocation, WorldLoreEntry, Companion, QuestObjective } from '../../types';
+import * as GameTemplates from '../../templates'; // Import for type assertions
 
 interface MiniInfoPopoverProps {
   isOpen: boolean;
@@ -67,18 +68,24 @@ const MiniInfoPopover: React.FC<MiniInfoPopoverProps> = ({ isOpen, targetRect, e
         const item = entity as Item;
         return (
           <>
-            <p><strong className="text-indigo-300">Loại:</strong> {item.type}</p>
+            <p><strong className="text-indigo-300">Phân loại:</strong> {item.category}
+                {item.category === "Equipment" && ` (${(item as GameTemplates.EquipmentTemplate).equipmentType})`}
+                {item.category === "Potion" && ` (${(item as GameTemplates.PotionTemplate).potionType})`}
+                {item.category === "Material" && ` (${(item as GameTemplates.MaterialTemplate).materialType})`}
+            </p>
             <p><strong className="text-indigo-300">Số lượng:</strong> {item.quantity}</p>
             {item.description && <p className="text-xs mt-1 italic text-gray-400">{item.description.substring(0, 100)}{item.description.length > 100 ? '...' : ''}</p>}
+            {item.category === "Potion" && (item as GameTemplates.PotionTemplate).effects && (item as GameTemplates.PotionTemplate).effects.length > 0 && <p className="text-xs mt-1 text-cyan-300">{(item as GameTemplates.PotionTemplate).effects.join(', ').substring(0,100)}...</p>}
+            {item.category === "Equipment" && (item as GameTemplates.EquipmentTemplate).uniqueEffects && (item as GameTemplates.EquipmentTemplate).uniqueEffects.length > 0 && <p className="text-xs mt-1 text-cyan-300">{(item as GameTemplates.EquipmentTemplate).uniqueEffects.join(', ').substring(0,100)}...</p>}
           </>
         );
       case 'skill':
         const skill = entity as Skill;
         return (
           <>
-            <p><strong className="text-indigo-300">Loại:</strong> {skill.type}</p>
+            <p><strong className="text-indigo-300">Loại:</strong> {skill.skillType}</p>
             {skill.description && <p className="text-xs mt-1 italic text-gray-400">{skill.description.substring(0,100)}{skill.description.length > 100 ? '...' : ''}</p>}
-            {skill.effect && <p><strong className="text-indigo-300">Hiệu ứng:</strong> {skill.effect.substring(0,100)}{skill.effect.length > 100 ? '...' : ''}</p>}
+            {skill.detailedEffect && <p><strong className="text-indigo-300">Hiệu ứng:</strong> {skill.detailedEffect.substring(0,100)}{skill.detailedEffect.length > 100 ? '...' : ''}</p>}
           </>
         );
       case 'quest':
