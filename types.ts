@@ -1,4 +1,5 @@
 
+
 import type { User as FirebaseUserType } from 'firebase/auth';
 import { HarmCategory, HarmBlockThreshold } from "@google/genai"; 
 import * as GameTemplates from './templates'; // Import all templates
@@ -115,6 +116,13 @@ export interface StartingLore {
   content: string;
 }
 
+export interface StartingLocation { // New interface for starting locations
+  name: string;
+  description: string;
+  isSafeZone?: boolean;
+  regionId?: string;
+}
+
 export interface WorldSettings {
   theme: string;
   settingDescription: string;
@@ -131,7 +139,9 @@ export interface WorldSettings {
   startingItems: StartingItem[];
   startingNPCs: StartingNPC[];     
   startingLore: StartingLore[];    
+  startingLocations: StartingLocation[]; // Added starting locations
   nsfwMode?: boolean; 
+  originalStorySummary?: string; // Renamed from fanficMainPlot
 }
 
 export interface TurnHistoryEntry {
@@ -224,4 +234,22 @@ export interface StyleSettings {
   playerAction: StyleSettingProperty;
   choiceButton: StyleSettingProperty;
   keywordHighlight: StyleSettingProperty; // New
+}
+
+export interface GeneratedWorldElements {
+  startingSkills: StartingSkill[];
+  startingItems: StartingItem[];
+  startingNPCs: StartingNPC[];
+  startingLore: StartingLore[];
+  startingLocations?: StartingLocation[]; // Added starting locations
+  playerName?: string;
+  playerPersonality?: string;
+  playerBackstory?: string;
+  playerGoal?: string;
+  playerStartingTraits?: string;
+  worldTheme?: string;
+  worldSettingDescription?: string;
+  worldWritingStyle?: string;
+  currencyName?: string;
+  originalStorySummary?: string;
 }

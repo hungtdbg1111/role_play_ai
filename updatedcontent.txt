@@ -1,0 +1,64 @@
+---
+### Bản Cập Nhật Chính - Phiên bản 1.0.0 (Ngày 22/06/2025)
+
+**Các Tính Năng Nổi Bật:**
+
+**Hệ Thống AI Gemini Thông Minh:**
+Tạo cốt truyện, diễn biến, mô tả và lựa chọn động hoàn toàn bởi AI.
+Khả năng phân tích và phản hồi các hành động/câu chuyện do người chơi nhập.
+Hỗ trợ tạo chi tiết thế giới và nhân vật từ ý tưởng ban đầu hoặc truyện đồng nhân (fanfiction).
+
+**Tùy Chỉnh Nhân Vật Sâu Sắc:**
+Tạo nhân vật với tên, giới tính, tính cách, tiểu sử, mục tiêu và đặc điểm khởi đầu riêng.
+Hệ thống chỉ số nhân vật (HP, Mana, ATK, EXP, Cấp độ, Cảnh giới, Tiền tệ) được cập nhật tự động.
+
+**Kiến Tạo Thế Giới Đa Dạng:**
+**Tùy chỉnh ban đầu:** Chủ đề, bối cảnh, văn phong AI, độ khó, tên tiền tệ.
+**AI Hỗ trợ tạo thế giới:**
+Từ ý tưởng cốt truyện người chơi cung cấp.
+Chế độ Đồng Nhân (Fanfiction): Tạo thế giới dựa trên tên truyện gốc hoặc file .txt nội dung truyện (hỗ trợ đếm token, tối đa ${MAX_TOKENS_FANFIC.toLocaleString()} token).
+**Khởi tạo chi tiết:** Người chơi có thể tự định nghĩa hoặc để AI tạo Kỹ năng, Vật phẩm, NPC, Tri Thức (Lore), và Địa Điểm khởi đầu.
+**Chế độ NSFW (18+):** Tùy chọn cho phép AI tạo nội dung người lớn cho cả việc tạo thế giới và diễn biến game.
+
+**Gameplay Tương Tác & Sống Động:**
+**Lựa chọn & Hành động:** Người chơi đưa ra quyết định qua các lựa chọn AI gợi ý hoặc tự nhập hành động/câu chuyện.
+**Cập nhật trạng thái động:** AI sử dụng hệ thống "tags" để thay đổi chỉ số người chơi, vật phẩm, kỹ năng, nhiệm vụ, NPC, địa điểm, phe phái và tri thức thế giới.
+**Hệ thống Kiến Thức (Knowledge Base):** Theo dõi chi tiết:
+**Vật phẩm:** Với tên, mô tả, số lượng, độ hiếm, giá trị, loại (Trang bị, Đan dược, Nguyên liệu, Nhiệm vụ, Khác), và các thuộc tính riêng (chỉ số cộng thêm, hiệu ứng).
+**Kỹ năng:** Với tên, mô tả, loại (Chủ động, Bị động, Công pháp...), hiệu ứng chi tiết, tiêu hao mana, sát thương, hồi phục, thời gian hồi.
+**Nhiệm vụ:** Với tiêu đề, mô tả, trạng thái (Đang làm, Hoàn thành, Thất bại), và các mục tiêu cụ thể.
+**NPC:** Với tên, chức danh, mô tả, tính cách, độ thiện cảm, phe phái.
+**Địa Điểm:** Với tên, mô tả, trạng thái an toàn, vùng liên kết.
+**Phe phái:** Với tên, mô tả, khuynh hướng, uy tín người chơi.
+**Tri Thức Thế Giới (Lore):** Các mẩu chuyện, lịch sử, thông tin về thế giới.
+**Bạn Đồng Hành:** (Nếu có) Với chỉ số và mô tả.
+**Diễn biến theo lượt:** Cốt truyện tiến triển qua các lượt chơi.
+**Phân trang & Tóm tắt:** Nhật ký phiêu lưu được chia thành các trang, với AI tự động tóm tắt nội dung các trang trước đó.
+**Lùi Lượt (Rollback):** Khả năng quay lại các lượt chơi trước.
+**Chỉnh sửa diễn biến:** Cho phép người chơi sửa lại nội dung của các đoạn tường thuật AI hoặc hành động của chính mình.
+
+**Quản Lý Game Linh Hoạt:**
+**Lưu & Tải Game:** Hỗ trợ lưu và tải tiến trình chơi.
+**Lựa chọn Lưu Trữ:**
+**Cục Bộ (IndexedDB):** Lưu trực tiếp trên trình duyệt.
+**Đám Mây (Firebase):** Người dùng có thể tự cấu hình để lưu trên dự án Firebase cá nhân.
+**Nhập & Xuất Dữ Liệu:** Khả năng xuất file lưu game ra định dạng JSON và nhập lại từ file JSON.
+
+**Giao Diện & Trải Nghiệm Người Dùng (UI/UX):**
+**Giao diện trực quan:** Sử dụng Tailwind CSS cho thiết kế hiện đại và đáp ứng.
+**Bảng Điều Khiển Debug:** Có thể kéo thả và thay đổi kích thước, cung cấp thông tin gỡ lỗi chi tiết.
+**Bảng Thông Tin Phụ (Off-Canvas):** Truy cập nhanh thông tin Nhân Vật, Thế Giới, và Nhiệm Vụ.
+**Đánh Dấu Từ Khóa & Popover:** Các từ khóa quan trọng (tên NPC, vật phẩm, kỹ năng...) trong lời kể được tự động làm nổi bật và hiển thị thông tin tóm tắt khi nhấp vào.
+**Tùy Chỉnh Hiển Thị Gameplay:** Thay đổi font chữ, kích thước chữ, màu chữ, màu nền cho các đoạn kể chuyện, hành động người chơi, nút lựa chọn và từ khóa.
+**Thông Tin Cập Nhật:** Xem các thay đổi mới nhất của game ngay tại màn hình chính.
+
+**Cấu Hình Nâng Cao:**
+**Thiết Lập API Gemini:**
+Lựa chọn sử dụng API Key Gemini của hệ thống (mặc định) hoặc API Key cá nhân.
+Chọn model Gemini phù hợp.
+Điều chỉnh cài đặt an toàn nội dung của Gemini.
+**Cài Đặt Lưu Trữ:**
+Chuyển đổi giữa lưu trữ Cục Bộ và Đám Mây.
+Cung cấp thông tin cấu hình Firebase nếu chọn lưu trữ Đám Mây.
+
+---
