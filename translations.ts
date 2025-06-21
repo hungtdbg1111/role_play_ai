@@ -270,4 +270,6 @@ export const VIETNAMESE = {
   loadingUpdateNotes: "Đang tải thông tin cập nhật...",
   errorLoadingUpdateNotes: "Không thể tải thông tin cập nhật. Vui lòng thử lại sau.",
   noUpdateNotesAvailable: "Chưa có thông tin cập nhật mới.",
+  viewRawAiResponseButton: "Xem Phản Hồi Thô Từ AI",
+  rawAiResponseModalTitle: "Phản Hồi Thô Từ AI (Chưa Xử Lý)",
 };

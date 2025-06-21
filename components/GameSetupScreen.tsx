@@ -2,6 +2,7 @@ import React, { useState, useCallback, ChangeEvent, useRef } from 'react';
 import { GameScreen, WorldSettings, StartingSkill, StartingItem, StartingNPC, StartingLore, StartingLocation } from '../types'; // Added StartingLocation
 import Button from './ui/Button';
 import Spinner from './ui/Spinner';
+import Modal from './ui/Modal'; // Import Modal
 import { VIETNAMESE, DEFAULT_WORLD_SETTINGS, MAX_TOKENS_FANFIC } from '../constants';
 import { generateWorldDetailsFromStory, generateFanfictionWorldDetails, countTokens } from '../services/geminiService';
 import InputField from './ui/InputField';
@@ -41,6 +42,9 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
   const [isOriginalStoryIdeaNsfw, setIsOriginalStoryIdeaNsfw] = useState(false);
   const [isFanficIdeaNsfw, setIsFanficIdeaNsfw] = useState(false);
 
+  const [rawApiResponseText, setRawApiResponseText] = useState<string | null>(null);
+  const [showRawResponseModal, setShowRawResponseModal] = useState(false);
+
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
@@ -50,11 +54,13 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
       setSettings(prev => ({ ...prev, [name]: value }));
     }
     if (generatorMessage) setGeneratorMessage(null);
-  }, [generatorMessage]);
+    if (rawApiResponseText) setRawApiResponseText(null); // Clear raw response on any change
+  }, [generatorMessage, rawApiResponseText]);
 
   const handleOriginalStorySummaryChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setOriginalStorySummary(e.target.value);
     setSettings(prev => ({ ...prev, originalStorySummary: e.target.value }));
+    if (rawApiResponseText) setRawApiResponseText(null); 
   };
 
   // --- Starting Skills Handlers ---
@@ -180,8 +186,10 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
     }
     setIsGeneratingDetails(true);
     setGeneratorMessage({text: VIETNAMESE.generatingWorldDetails, type: 'info'});
+    setRawApiResponseText(null); // Clear previous raw response
     try {
-      const generatedElements = await generateWorldDetailsFromStory(storyIdea, isOriginalStoryIdeaNsfw); // Pass NSFW state
+      const generatedElements = await generateWorldDetailsFromStory(storyIdea, isOriginalStoryIdeaNsfw);
+      setRawApiResponseText(generatedElements.rawText); // Store raw response
       setSettings(prev => ({
         ...prev,
         playerName: generatedElements.response.playerName || prev.playerName,
@@ -198,12 +206,13 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
         startingNPCs: generatedElements.response.startingNPCs.length > 0 ? generatedElements.response.startingNPCs : prev.startingNPCs,
         startingLore: generatedElements.response.startingLore.length > 0 ? generatedElements.response.startingLore : prev.startingLore,
         startingLocations: generatedElements.response.startingLocations && generatedElements.response.startingLocations.length > 0 ? generatedElements.response.startingLocations : prev.startingLocations,
-        originalStorySummary: prev.originalStorySummary, // Keep existing original story summary
+        originalStorySummary: prev.originalStorySummary, 
       }));
       setGeneratorMessage({ text: VIETNAMESE.worldDetailsGeneratedSuccess, type: 'success' });
     } catch (error) {
       console.error("Error generating world details:", error);
       setGeneratorMessage({ text: `${VIETNAMESE.errorGeneratingWorldDetails} ${error instanceof Error ? error.message : ''}`, type: 'error' });
+      setRawApiResponseText(null);
     } finally {
       setIsGeneratingDetails(false);
     }
@@ -211,6 +220,7 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
   
   const handleFanficFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
     setGeneratorMessage(null);
+    setRawApiResponseText(null); // Clear raw response
     setFanficTokenCount(null);
     setFanficFileContent(null);
     const file = e.target.files?.[0];
@@ -250,6 +260,7 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
   const handleGenerateFanficDetails = async () => {
     let sourceMaterial: string = '';
     let isSourceContent = false;
+    setRawApiResponseText(null); // Clear previous raw response
 
     if (fanficSourceType === 'name') {
       if (!fanficStoryName.trim()) {
@@ -273,7 +284,8 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
     setIsGeneratingFanficDetails(true);
     setGeneratorMessage({text: VIETNAMESE.generatingFanficDetails, type: 'info'});
     try {
-      const generatedElements = await generateFanfictionWorldDetails(sourceMaterial, isSourceContent, fanficPlayerDescription.trim(), isFanficIdeaNsfw); // Pass NSFW state
+      const generatedElements = await generateFanfictionWorldDetails(sourceMaterial, isSourceContent, fanficPlayerDescription.trim(), isFanficIdeaNsfw);
+      setRawApiResponseText(generatedElements.rawText); // Store raw response
       setSettings(prev => ({
         ...prev,
         playerName: generatedElements.response.playerName || prev.playerName,
@@ -302,6 +314,7 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
     } catch (error) {
       console.error("Error generating fanfiction world details:", error);
       setGeneratorMessage({ text: `${VIETNAMESE.errorGeneratingFanficDetails} ${error instanceof Error ? error.message : ''}`, type: 'error' });
+      setRawApiResponseText(null);
     } finally {
       setIsGeneratingFanficDetails(false);
     }
@@ -340,7 +353,7 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
               id="storyIdea"
               name="storyIdea"
               value={storyIdea}
-              onChange={(e) => { setStoryIdea(e.target.value); if (generatorMessage) setGeneratorMessage(null); }}
+              onChange={(e) => { setStoryIdea(e.target.value); if (generatorMessage) setGeneratorMessage(null); if (rawApiResponseText) setRawApiResponseText(null); }}
               textarea
               rows={3}
               placeholder={VIETNAMESE.storyIdeaDescriptionPlaceholder}
@@ -374,11 +387,11 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
               <label className="block text-xs sm:text-sm font-medium text-gray-300 mb-2">{VIETNAMESE.fanficSourceTypeLabel}</label>
               <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-4 mb-3">
                 <label className="flex items-center text-gray-200 text-sm">
-                  <input type="radio" name="fanficSourceType" value="name" checked={fanficSourceType === 'name'} onChange={() => { setFanficSourceType('name'); setGeneratorMessage(null); }} className="h-4 w-4 text-green-500 focus:ring-green-400 border-gray-600 bg-gray-700"/>
+                  <input type="radio" name="fanficSourceType" value="name" checked={fanficSourceType === 'name'} onChange={() => { setFanficSourceType('name'); setGeneratorMessage(null); setRawApiResponseText(null); }} className="h-4 w-4 text-green-500 focus:ring-green-400 border-gray-600 bg-gray-700"/>
                   <span className="ml-2">{VIETNAMESE.fanficSourceTypeName}</span>
                 </label>
                 <label className="flex items-center text-gray-200 text-sm">
-                  <input type="radio" name="fanficSourceType" value="file" checked={fanficSourceType === 'file'} onChange={() => { setFanficSourceType('file'); setGeneratorMessage(null); }} className="h-4 w-4 text-green-500 focus:ring-green-400 border-gray-600 bg-gray-700"/>
+                  <input type="radio" name="fanficSourceType" value="file" checked={fanficSourceType === 'file'} onChange={() => { setFanficSourceType('file'); setGeneratorMessage(null); setRawApiResponseText(null);}} className="h-4 w-4 text-green-500 focus:ring-green-400 border-gray-600 bg-gray-700"/>
                   <span className="ml-2">{VIETNAMESE.fanficSourceTypeFile}</span>
                 </label>
               </div>
@@ -388,7 +401,7 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
                   label={VIETNAMESE.fanficStoryNameLabel}
                   id="fanficStoryName"
                   value={fanficStoryName}
-                  onChange={(e) => { setFanficStoryName(e.target.value); if (generatorMessage) setGeneratorMessage(null);}}
+                  onChange={(e) => { setFanficStoryName(e.target.value); if (generatorMessage) setGeneratorMessage(null); if (rawApiResponseText) setRawApiResponseText(null);}}
                   placeholder={VIETNAMESE.fanficStoryNamePlaceholder}
                   className="text-sm sm:text-base"
                 />
@@ -411,7 +424,7 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
                   label={VIETNAMESE.fanficPlayerDescriptionLabel}
                   id="fanficPlayerDescription"
                   value={fanficPlayerDescription}
-                  onChange={(e) => { setFanficPlayerDescription(e.target.value); if (generatorMessage) setGeneratorMessage(null);}}
+                  onChange={(e) => { setFanficPlayerDescription(e.target.value); if (generatorMessage) setGeneratorMessage(null); if (rawApiResponseText) setRawApiResponseText(null);}}
                   textarea
                   rows={2}
                   placeholder={VIETNAMESE.fanficPlayerDescriptionPlaceholder}
@@ -475,6 +488,18 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
               {generatorMessage.text}
             </div>
           )}
+          {rawApiResponseText && generatorMessage?.type === 'success' && (
+             <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowRawResponseModal(true)}
+                className="mt-2 text-sky-400 hover:text-sky-300 border-sky-500 text-xs w-full"
+            >
+                {VIETNAMESE.viewRawAiResponseButton || "Xem Phản Hồi Thô Từ AI"}
+            </Button>
+          )}
+
 
           <fieldset className="border border-gray-700 p-3 sm:p-4 rounded-md">
             <legend className="text-lg sm:text-xl font-semibold text-indigo-400 px-2">Thông Tin Nhân Vật</legend>
@@ -576,6 +601,20 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
           </div>
         </form>
       </div>
+
+      {showRawResponseModal && rawApiResponseText && (
+        <Modal
+          isOpen={showRawResponseModal}
+          onClose={() => setShowRawResponseModal(false)}
+          title={VIETNAMESE.rawAiResponseModalTitle || "Phản Hồi Thô Từ AI"}
+        >
+          <div className="bg-gray-700 p-3 rounded-md max-h-[60vh] overflow-y-auto custom-scrollbar">
+            <pre className="text-xs text-gray-200 whitespace-pre-wrap break-all">
+              {rawApiResponseText}
+            </pre>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };
