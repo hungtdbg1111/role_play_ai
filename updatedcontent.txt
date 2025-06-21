@@ -54,7 +54,7 @@ Chế độ Đồng Nhân (Fanfiction): Tạo thế giới dựa trên tên truy
 
 **Cấu Hình Nâng Cao:**
 **Thiết Lập API Gemini:**
-Lựa chọn sử dụng API Key Gemini của hệ thống (mặc định) hoặc API Key cá nhân.
+Lựa chọn sử dụng API Key Gemini của hệ thống (Chưa hỗ trợ) hoặc API Key cá nhân.
 Chọn model Gemini phù hợp.
 Điều chỉnh cài đặt an toàn nội dung của Gemini.
 **Cài Đặt Lưu Trữ:**

@@ -106,15 +106,17 @@ const InitialScreen: React.FC<InitialScreenProps> = ({ setCurrentScreen, firebas
   const fetchUpdateNotes = useCallback(async () => {
     setIsLoadingNotes(true);
     setErrorNotes(null);
+    const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/hungtdbg1111/role_play_ai/main/updatedcontent.txt';
     try {
-      const response = await fetch('/updatedcontent.txt');
+      // Add a cache-busting parameter to the URL
+      const response = await fetch(`${GITHUB_RAW_URL}?t=${new Date().getTime()}`);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       const text = await response.text();
       setUpdateNotes(text);
     } catch (error) {
-      console.error("Failed to fetch update notes:", error);
+      console.error("Failed to fetch update notes from GitHub:", error);
       setErrorNotes(VIETNAMESE.errorLoadingUpdateNotes || "Không thể tải thông tin cập nhật.");
       setUpdateNotes(null); // Ensure notes are cleared on error
     } finally {
