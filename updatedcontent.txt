@@ -1,9 +1,9 @@
 ### Bản Cập Nhật phụ - Phiên bản 1.1.0 (Ngày 23/06/2025)
 
-Làm lại hệ thống save game: thêm auto save, 1 world chỉ được có 1 save riêng mà thôi.
-Làm lại hệ thống tu luyện: sửa exp và max exp, cho người chơi hoặc AI quyết định những cảnh giới chính (Mỗi cảnh giới có 10 cấp từ nhất trọng tới cửu trọng tương ứng cấp x1->x9 và đỉnh phong tương ứng với x9+1, các cảnh giới khác cũng tương tự vậy) Chỉnh lại scale chỉ số nhân vật chính, AI nên trả về % max exp hoặc +exp, tính toán việc lên cấp trên máy khách.
-Làm thêm hệ thống xuất và nhập file "tạo thế giới và nhân vật" để có thể tái sử dụng hoặc chia sẻ.
-Sửa lỗi nhiệm vụ không cập nhật
+**Làm lại hệ thống save game:** thêm auto save, 1 world chỉ được có 1 save riêng mà thôi.
+**Làm lại hệ thống tu luyện:** sửa exp và max exp, cho người chơi hoặc AI quyết định những cảnh giới chính (Mỗi cảnh giới có 10 cấp từ nhất trọng tới cửu trọng tương ứng cấp x1->x9 và đỉnh phong tương ứng với x9+1, các cảnh giới khác cũng tương tự vậy) Chỉnh lại scale chỉ số nhân vật chính, AI nên trả về % max exp hoặc +exp, tính toán việc lên cấp trên máy khách.
+**Làm thêm hệ thống xuất và nhập file "tạo thế giới và nhân vật" để có thể tái sử dụng hoặc chia sẻ.**
+**Sửa lỗi nhiệm vụ không cập nhật**
 
 ---
 ### Bản Cập Nhật Chính - Phiên bản 1.0.0 (Ngày 22/06/2025)
