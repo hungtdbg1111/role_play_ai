@@ -242,6 +242,8 @@ export const VIETNAMESE = {
   autoSavingNotification: "Đã tự động lưu game.",
   autoPlayEnabledNotification: "Đã bật chế độ tự động chơi.",
   autoPlayDisabledNotification: "Đã tắt chế độ tự động chơi.",
+  autoPlayContinueAction: "Tiếp tục diễn biến.",
+  autoPlayStoppedOnError: "Đã dừng tự động chơi do có lỗi.",
   fileSizeLabel: "Dung lượng",
   gameplaySettingsButton: "Cài Đặt Hiển Thị",
   gameplaySettingsButtonShort: "Hiển Thị",
@@ -272,4 +274,5 @@ export const VIETNAMESE = {
   noUpdateNotesAvailable: "Chưa có thông tin cập nhật mới.",
   viewRawAiResponseButton: "Xem Phản Hồi Thô Từ AI",
   rawAiResponseModalTitle: "Phản Hồi Thô Từ AI (Chưa Xử Lý)",
+  noContentToSummarize: "Không có nội dung để tóm tắt cho trang này.",
 };

@@ -48,7 +48,9 @@ export const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [rawAiResponsesLog, setRawAiResponsesLog] = useState<string[]>([]);
   const [sentPromptsLog, setSentPromptsLog] = useState<string[]>([]);
-  const [latestPromptTokenCount, setLatestPromptTokenCount] = useState<number | null>(null);
+  const [latestPromptTokenCount, setLatestPromptTokenCount] = useState<number | null | string>(null);
+  const [summarizationResponsesLog, setSummarizationResponsesLog] = useState<string[]>([]);
+
 
   const [storageSettings, setStorageSettings] = useState<StorageSettings>(DEFAULT_STORAGE_SETTINGS);
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
@@ -74,12 +76,24 @@ export const App: React.FC = () => {
 
   const logSentPrompt = useCallback((prompt: string) => {
     setSentPromptsLog(prev => [prompt, ...prev].slice(0, 10));
-    countTokens(prompt)
-      .then(setLatestPromptTokenCount)
-      .catch(err => {
-        console.warn("Could not count tokens for prompt:", err);
-        setLatestPromptTokenCount(null); 
-      });
+    
+    const { model: currentModel } = getApiSettings();
+    
+    if (currentModel === 'gemini-1.5-flash') {
+      setLatestPromptTokenCount('N/A (model)'); 
+    } else {
+      setLatestPromptTokenCount('Đang tính...'); 
+      countTokens(prompt)
+        .then(count => setLatestPromptTokenCount(count)) 
+        .catch(err => {
+          console.warn("Could not count tokens for prompt:", err);
+          setLatestPromptTokenCount('Lỗi'); 
+        });
+    }
+  }, []);
+
+  const logSummarizationResponse = useCallback((response: string) => {
+    setSummarizationResponsesLog(prev => [response, ...prev].slice(0, 10)); 
   }, []);
 
   useEffect(() => {
@@ -157,17 +171,16 @@ export const App: React.FC = () => {
     setTimeout(() => setNotification(null), type === 'error' || type === 'warning' ? 7000 : 4000);
   }, []);
 
-  const addRawMessage = useCallback((type: GameMessage['type'], content: string, turn: number, choices?: AiChoice[], isPlayerInput?: boolean) => {
-    setGameMessages(prev => [...prev, {
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-      type,
-      content,
-      timestamp: Date.now(),
-      choices,
-      isPlayerInput,
-      turnNumber: turn
-    }]);
+  const addMessageAndUpdateState = useCallback((
+    newMessages: GameMessage[],
+    newKnowledgeBase: KnowledgeBase,
+    callback?: () => void
+  ) => {
+    setGameMessages(prev => [...prev, ...newMessages]);
+    setKnowledgeBase(newKnowledgeBase);
+    if (callback) callback();
   }, []);
+
 
   const parseTagValue = useCallback((tagValue: string): Record<string, string> => {
     const result: Record<string, string> = {};
@@ -194,24 +207,29 @@ export const App: React.FC = () => {
 
     const startTurnOfPage = kb.currentPageHistory[pageNumber - 1];
     
+    // For the last page, kb.playerStats.turn is the *next* turn, so events of current turn are up to kb.playerStats.turn - 1
+    // However, if we are loading, kb.playerStats.turn is the turn of the last event.
+    // The most reliable endTurn is defined by the start of the *next* page, or if it's the very last page, up to the highest turn number in messages.
     const endTurnOfPage = (pageNumber === kb.currentPageHistory.length)
-                          ? kb.playerStats.turn 
+                          ? Infinity // Show all messages from startTurnOfPage onwards for the current active page
                           : kb.currentPageHistory[pageNumber] - 1; 
     
     return allMessages.filter(msg => msg.turnNumber >= startTurnOfPage && msg.turnNumber <= endTurnOfPage);
   }, []);
 
-  const performTagProcessing = useCallback((currentKb: KnowledgeBase, tagBatch: string[]): {
+  const performTagProcessing = useCallback((currentKb: KnowledgeBase, tagBatch: string[], turnForSystemMessages: number): {
     newKb: KnowledgeBase;
-    turnIncrementedThisBatch: boolean;
+    turnIncrementedByTag: boolean;
+    systemMessagesFromTags: GameMessage[];
   } => {
     const newKb: KnowledgeBase = JSON.parse(JSON.stringify(currentKb));
     if (!newKb.discoveredFactions) newKb.discoveredFactions = [];
     if (!newKb.worldLore) newKb.worldLore = []; 
     if (!newKb.allQuests) newKb.allQuests = []; 
-    if (!newKb.discoveredLocations) newKb.discoveredLocations = []; // Ensure discoveredLocations is initialized
+    if (!newKb.discoveredLocations) newKb.discoveredLocations = []; 
 
-    let turnIncrementedThisBatch = false;
+    let turnIncrementedByTag = false;
+    const systemMessagesFromTags: GameMessage[] = [];
 
     tagBatch.forEach(tag => {
         const match = tag.match(/\[(.*?):\s*(.*)\]$/s);
@@ -235,6 +253,15 @@ export const App: React.FC = () => {
 
                     if (key === 'isInCombat') {
                        (statsUpdates as any)[key] = valueStr.toLowerCase() === 'true';
+                    } else if (key === 'turn') {
+                        if (valueStr.startsWith('+') || valueStr.startsWith('-')) {
+                            (statsUpdates as any)[key] = oldTurnForThisTagProcessing + parseInt(valueStr, 10);
+                        } else {
+                            (statsUpdates as any)[key] = parseInt(valueStr, 10);
+                        }
+                        if (statsUpdates.turn! > oldTurnForThisTagProcessing) {
+                           turnIncrementedByTag = true;
+                        }
                     } else if (typeof existingStatValue === 'number' ||
                                (key in DEFAULT_PLAYER_STATS && typeof DEFAULT_PLAYER_STATS[key] === 'number' && !isNaN(parseInt(valueStr,10))) ) {
                         const baseValue = (typeof existingStatValue === 'number') ? existingStatValue : (newKb.playerStats as any)[key] || 0;
@@ -263,9 +290,6 @@ export const App: React.FC = () => {
 
                 newKb.playerStats = { ...newKb.playerStats, ...statsUpdates };
                 
-                if (statsUpdates.turn && statsUpdates.turn > oldTurnForThisTagProcessing) {
-                    turnIncrementedThisBatch = true;
-                }
                 if (tagName === 'PLAYER_STATS_INIT' && statsUpdates.turn) {
                    if (newKb.currentPageHistory?.length === 1 && newKb.currentPageHistory[0] > newKb.playerStats.turn) {
                        newKb.currentPageHistory = [newKb.playerStats.turn];
@@ -429,7 +453,13 @@ export const App: React.FC = () => {
                 newKb.realmProgressionList = tagFullValue.split(',').map(s => s.trim().replace(/^"|"$/g, ''));
                 break;
             case 'MESSAGE':
-                 addRawMessage('system', tagParams.message || tagFullValue.replace(/^"|"$/g, ''), newKb.playerStats.turn);
+                 systemMessagesFromTags.push({
+                    id: 'tag-message-' + Date.now() + Math.random(),
+                    type: 'system',
+                    content: tagParams.message || tagFullValue.replace(/^"|"$/g, ''),
+                    timestamp: Date.now(),
+                    turnNumber: turnForSystemMessages
+                 });
                  break;
             case 'LORE_NPC':
                 if (tagParams.name) {
@@ -485,14 +515,11 @@ export const App: React.FC = () => {
                     const regionId = tagParams.regionId;
 
                     if (existingLocIndex > -1) {
-                        // Update existing location
                         const loc = newKb.discoveredLocations[existingLocIndex];
                         if (locDesc !== undefined) loc.description = locDesc;
                         if (isSafeZone !== undefined) loc.isSafeZone = isSafeZone;
                         if (regionId !== undefined) loc.regionId = regionId;
                     } else {
-                        // Add new location
-                        // No need for: if (!newKb.discoveredLocations) newKb.discoveredLocations = []; because it's initialized at the top of the function
                         const newLocation: GameLocation = {
                             id: Date.now().toString() + (tagParams.name || 'loc').replace(/\s/g, ''),
                             name: tagParams.name,
@@ -542,8 +569,8 @@ export const App: React.FC = () => {
         }
     });
 
-    return { newKb, turnIncrementedThisBatch };
-  }, [parseTagValue, addRawMessage]);
+    return { newKb, turnIncrementedByTag, systemMessagesFromTags };
+  }, [parseTagValue]);
 
    const handleSetupComplete = (settings: WorldSettings) => {
     setIsLoading(true);
@@ -552,6 +579,7 @@ export const App: React.FC = () => {
     setRawAiResponsesLog([]);
     setSentPromptsLog([]);
     setLatestPromptTokenCount(null);
+    setSummarizationResponsesLog([]);
 
 
     const initialKB: KnowledgeBase = {
@@ -564,61 +592,88 @@ export const App: React.FC = () => {
       lastSummarizedTurn: 0,
       turnHistory: [],
     };
-    setKnowledgeBase(initialKB);
+    
     setCurrentPageDisplay(1);
 
 
     generateInitialStory(settings, logSentPrompt)
       .then(({response, rawText}) => {
         setRawAiResponsesLog(prev => [rawText, ...prev].slice(0,50));
-        const { newKb, turnIncrementedThisBatch } = performTagProcessing(initialKB, response.tags);
         
-        let finalKb = newKb;
-        if (finalKb.playerStats.turn === 0 && response.tags.some(tag => tag.toUpperCase().includes("PLAYER_STATS_INIT:"))) {
-            finalKb = JSON.parse(JSON.stringify(newKb));
-            finalKb.playerStats.turn = 1;
-             if (finalKb.currentPageHistory?.length === 1 && finalKb.currentPageHistory[0] === 0) {
-                 finalKb.currentPageHistory = [1];
-            }
-        } else if (!turnIncrementedThisBatch && !response.tags.some(tag => tag.toUpperCase().includes("PLAYER_STATS_INIT:"))) {
-            finalKb = JSON.parse(JSON.stringify(newKb)); 
-            finalKb.playerStats.turn = 1;
-             if (finalKb.currentPageHistory?.length === 1 && finalKb.currentPageHistory[0] === 0) { // Should be 0 if turn was 0
-                 finalKb.currentPageHistory = [1];
-            } else if (!finalKb.currentPageHistory || finalKb.currentPageHistory.length === 0) {
-                 finalKb.currentPageHistory = [1];
-            }
-            addRawMessage('system', "Hệ thống: Khởi tạo lượt chơi = 1.", 1);
+        // Process tags. Initial playerStats.turn is 0.
+        const { newKb: kbAfterTags, turnIncrementedByTag, systemMessagesFromTags: systemMessagesFromInitialTags } = performTagProcessing(initialKB, response.tags, 1);
+        
+        let finalKbForSetup = kbAfterTags;
+        let turnForInitialMessages = 1;
+
+        if (turnIncrementedByTag && finalKbForSetup.playerStats.turn > 0) {
+            turnForInitialMessages = finalKbForSetup.playerStats.turn;
+        } else {
+            finalKbForSetup.playerStats.turn = 1;
+            turnForInitialMessages = 1;
         }
-        setKnowledgeBase(finalKb);
-        addRawMessage('narration', response.narration, finalKb.playerStats.turn, response.choices);
+        
+        if (finalKbForSetup.currentPageHistory?.length === 1 && finalKbForSetup.currentPageHistory[0] !== turnForInitialMessages) {
+            finalKbForSetup.currentPageHistory = [turnForInitialMessages];
+        } else if (!finalKbForSetup.currentPageHistory || finalKbForSetup.currentPageHistory.length === 0) {
+            finalKbForSetup.currentPageHistory = [turnForInitialMessages];
+        }
+        
+        const newMessages: GameMessage[] = [];
+        newMessages.push({
+          id: Date.now().toString() + Math.random(), type: 'narration', content: response.narration, 
+          timestamp: Date.now(), choices: response.choices, turnNumber: turnForInitialMessages
+        });
         if (response.systemMessage) {
-          addRawMessage('system', response.systemMessage, finalKb.playerStats.turn);
+          newMessages.push({
+            id: Date.now().toString() + Math.random(), type: 'system', content: response.systemMessage, 
+            timestamp: Date.now(), turnNumber: turnForInitialMessages
+          });
         }
-        setCurrentScreen(GameScreen.Gameplay);
+        newMessages.push(...systemMessagesFromInitialTags.map(m => ({...m, turnNumber: turnForInitialMessages })));
+
+        if (!turnIncrementedByTag && finalKbForSetup.playerStats.turn === 1 && initialKB.playerStats.turn === 0 && !response.tags.some(t => t.toUpperCase().includes('PLAYER_STATS_INIT:') && t.toUpperCase().includes('TURN=1'))) {
+           // If turn was not set by PLAYER_STATS_INIT, but we manually set it to 1
+        }
+        
+        addMessageAndUpdateState(newMessages, finalKbForSetup, () => {
+             setCurrentScreen(GameScreen.Gameplay);
+             setIsLoading(false);
+        });
+
       })
       .catch(err => {
         setError(err.message);
         console.error(err);
-      })
-      .finally(() => setIsLoading(false));
+        setIsLoading(false);
+      });
   };
 
 
-  const handlePlayerAction = async (
-    action: string,
+  const handlePlayerAction = useCallback(async (
+    action: string, 
     isChoice: boolean,
     inputType: PlayerActionInputType,
     responseLength: ResponseLength
   ) => {
     setIsLoading(true);
     setError(null);
+    
+    const turnOfPlayerAction = knowledgeBase.playerStats.turn; // This is the turn the player is acting IN.
+    const knowledgeBaseAtActionStart = JSON.parse(JSON.stringify(knowledgeBase)); // KB state *before* this turn's events
+    const gameMessagesBeforePlayerAction = [...gameMessages]; // Messages *before* this turn's events
 
-    const currentTurn = knowledgeBase.playerStats.turn;
-    addRawMessage('player_action', action, currentTurn, undefined, true);
-
-    const messagesForCurrentPage = getMessagesForPage(currentPageDisplay, knowledgeBase, gameMessages);
-    let currentPageMessagesLog = messagesForCurrentPage
+    const playerActionMessage: GameMessage = {
+      id: Date.now().toString() + Math.random(),
+      type: 'player_action',
+      content: action,
+      timestamp: Date.now(),
+      isPlayerInput: true,
+      turnNumber: turnOfPlayerAction
+    };
+    
+    const messagesForCurrentPagePrompt = getMessagesForPage(currentPageDisplay, knowledgeBase, [...gameMessages, playerActionMessage]);
+    let currentPageMessagesLog = messagesForCurrentPagePrompt
         .map(msg => {
             let prefix = "";
             if (msg.type === 'player_action') prefix = `${knowledgeBase.worldConfig?.playerName || 'Người chơi'} ${msg.isPlayerInput ? 'đã làm' : 'đã chọn'}: `;
@@ -627,23 +682,26 @@ export const App: React.FC = () => {
             return prefix + msg.content;
         })
         .join("\n---\n");
+    // The playerActionMessage is already part of messagesForCurrentPagePrompt if currentPageDisplay is the latest page.
+    // If not, ensure it's added. But usually it should be.
+    // No, currentPageMessagesLog here refers to log *before* AI response, but *after* player action.
+    // So the map function above IS correct to build the prompt log.
 
     const previousPageNumbers = knowledgeBase.currentPageHistory?.slice(0, -1) || [];
     const previousPageSummariesContent: string[] = previousPageNumbers
         .map((_, index) => knowledgeBase.pageSummaries?.[index + 1])
         .filter((summary): summary is string => !!summary);
     
-    const lastPageNumber = (knowledgeBase.currentPageHistory?.length || 1) -1;
+    const lastPageNumberForPrompt = (knowledgeBase.currentPageHistory?.length || 1) -1;
     let lastNarrationFromPreviousPage: string | undefined = undefined;
-    if (lastPageNumber > 0 && currentPageDisplay > lastPageNumber) { 
-        const messagesOfLastSummarizedPage = getMessagesForPage(lastPageNumber, knowledgeBase, gameMessages);
-        lastNarrationFromPreviousPage = [...messagesOfLastSummarizedPage].reverse().find(msg => msg.type === 'narration')?.content;
+    if (lastPageNumberForPrompt > 0 && currentPageDisplay > lastPageNumberForPrompt) { 
+        const messagesOfLastSummarizedPagePrompt = getMessagesForPage(lastPageNumberForPrompt, knowledgeBase, gameMessages);
+        lastNarrationFromPreviousPage = [...messagesOfLastSummarizedPagePrompt].reverse().find(msg => msg.type === 'narration')?.content;
     }
-
 
     try {
         const { response, rawText } = await generateNextTurn(
-            knowledgeBase,
+            knowledgeBase, // Pass KB state *before* this turn's action
             action,
             inputType,
             responseLength,
@@ -654,95 +712,247 @@ export const App: React.FC = () => {
         );
         setRawAiResponsesLog(prev => [rawText, ...prev].slice(0,50));
         
-        const { newKb: kbAfterTags, turnIncrementedThisBatch } = performTagProcessing(knowledgeBase, response.tags);
+        // process tags using KB state *before* this turn's action
+        const { newKb: kbAfterTags, turnIncrementedByTag, systemMessagesFromTags } = performTagProcessing(knowledgeBase, response.tags, turnOfPlayerAction);
         
-        let finalKb = kbAfterTags;
-        if (!turnIncrementedThisBatch && !response.tags.some(t => t.toUpperCase().includes('TURN=+1'))) {
-            finalKb = JSON.parse(JSON.stringify(kbAfterTags)); 
-            finalKb.playerStats.turn += 1;
-            addRawMessage('system', "Hệ thống: Lượt chơi +1.", finalKb.playerStats.turn);
-        }
-        
-        if (finalKb.turnHistory && finalKb.turnHistory.length >= MAX_TURN_HISTORY_LENGTH) {
-            finalKb.turnHistory.shift(); 
-        }
-        finalKb.turnHistory = [
-            ...(finalKb.turnHistory || []),
-            {
-                knowledgeBaseSnapshot: JSON.parse(JSON.stringify(knowledgeBase)), 
-                gameMessagesSnapshot: JSON.parse(JSON.stringify(gameMessages))   
-            }
-        ];
-        if (finalKb.turnHistory.length > MAX_TURN_HISTORY_LENGTH) {
-          finalKb.turnHistory = finalKb.turnHistory.slice(-MAX_TURN_HISTORY_LENGTH);
-        }
+        let finalKbStateForThisTurn = JSON.parse(JSON.stringify(kbAfterTags));
+        let manualTurnIncrementMessage: GameMessage | null = null;
 
-        setKnowledgeBase(finalKb);
-        addRawMessage('narration', response.narration, finalKb.playerStats.turn, response.choices);
+        if (turnIncrementedByTag) {
+            // AI handled turn increment via tag, ensure it's valid
+            if (finalKbStateForThisTurn.playerStats.turn <= turnOfPlayerAction) {
+                 // Invalid turn update from AI, manually fix
+                finalKbStateForThisTurn.playerStats.turn = turnOfPlayerAction + 1;
+                 manualTurnIncrementMessage = {
+                    id: 'manual-fix-turn-' + Date.now(), type: 'system', 
+                    content: `Hệ thống: Lượt chơi đã được điều chỉnh thành ${finalKbStateForThisTurn.playerStats.turn} (do AI tag không hợp lệ).`, 
+                    timestamp: Date.now(), turnNumber: turnOfPlayerAction
+                };
+            }
+        } else {
+            // AI did not increment turn, do it manually
+            finalKbStateForThisTurn.playerStats.turn = turnOfPlayerAction + 1;
+            manualTurnIncrementMessage = {
+                id: 'manual-increment-turn-' + Date.now(), type: 'system', 
+                content: "Hệ thống: Lượt chơi +1.", 
+                timestamp: Date.now(), turnNumber: turnOfPlayerAction
+            };
+        }
+        
+        const { turnHistory: _excludedTurnHistoryFromSnapshot, ...kbForSnapshot } = knowledgeBaseAtActionStart;
+        const newTurnHistoryEntry: TurnHistoryEntry = {
+            knowledgeBaseSnapshot: kbForSnapshot, 
+            gameMessagesSnapshot: gameMessagesBeforePlayerAction 
+        };
+
+        let updatedTurnHistory = [...(finalKbStateForThisTurn.turnHistory || [])];
+        if (updatedTurnHistory.length >= MAX_TURN_HISTORY_LENGTH) {
+            updatedTurnHistory.shift(); 
+        }
+        updatedTurnHistory.push(newTurnHistoryEntry);
+        finalKbStateForThisTurn.turnHistory = updatedTurnHistory;
+
+        const newMessagesForThisCycle: GameMessage[] = [playerActionMessage];
+        newMessagesForThisCycle.push({
+            id: Date.now().toString() + Math.random(), type: 'narration', content: response.narration,
+            timestamp: Date.now(), choices: response.choices, turnNumber: turnOfPlayerAction
+        });
         if (response.systemMessage) {
-            addRawMessage('system', response.systemMessage, finalKb.playerStats.turn);
+          newMessagesForThisCycle.push({
+            id: Date.now().toString() + Math.random(), type: 'system', content: response.systemMessage,
+            timestamp: Date.now(), turnNumber: turnOfPlayerAction
+          });
         }
+        newMessagesForThisCycle.push(...systemMessagesFromTags); // These already have turnOfPlayerAction
+        if (manualTurnIncrementMessage) {
+            newMessagesForThisCycle.push(manualTurnIncrementMessage);
+        }
+        
+        const turnCompleted = turnOfPlayerAction;
+        const shouldSummarizeAndPaginateNow = 
+            turnCompleted > 0 &&
+            turnCompleted % TURNS_PER_PAGE === 0 &&
+            turnCompleted > (knowledgeBase.lastSummarizedTurn || 0); // Use KB before this turn's summary for lastSummarizedTurn check
 
-        if (finalKb.playerStats.turn % TURNS_PER_PAGE === 1 && finalKb.playerStats.turn > 1 && finalKb.playerStats.turn > (knowledgeBase.lastSummarizedTurn || 0)) {
-            const pageToSummarize = Math.floor((finalKb.playerStats.turn - 2) / TURNS_PER_PAGE) + 1;
+        if (shouldSummarizeAndPaginateNow) {
+            const pageToSummarize = turnCompleted / TURNS_PER_PAGE;
             
-            if (!finalKb.pageSummaries?.[pageToSummarize]) {
+            if (!finalKbStateForThisTurn.pageSummaries?.[pageToSummarize]) { // Check against the potentially updated KB
                 setIsSummarizingNextPageTransition(true);
-                addRawMessage('system', VIETNAMESE.summarizingAndPreparingNextPage, finalKb.playerStats.turn);
+                newMessagesForThisCycle.push({
+                     id: 'summarizing-notice-' + Date.now(), type: 'system', 
+                     content: VIETNAMESE.summarizingAndPreparingNextPage, 
+                     timestamp: Date.now(), turnNumber: turnCompleted
+                });
 
-                const messagesForSummary = getMessagesForPage(pageToSummarize, finalKb, [...gameMessages, {id:'current-narration', type:'narration', content:response.narration, timestamp:Date.now(), turnNumber: finalKb.playerStats.turn}]);
+                const startTurnOfSummaryPageActual = (pageToSummarize - 1) * TURNS_PER_PAGE + 1;
+                const endTurnOfSummaryPageActual = turnCompleted;
                 
-                try {
-                    const summary = await summarizeTurnHistory(
-                        messagesForSummary,
-                        finalKb.worldConfig?.theme || "Không rõ",
-                        finalKb.worldConfig?.playerName || "Người chơi"
-                    );
-                    setKnowledgeBase(prevKb => {
-                        const updatedKb = JSON.parse(JSON.stringify(prevKb));
-                        if (!updatedKb.pageSummaries) updatedKb.pageSummaries = {};
-                        updatedKb.pageSummaries[pageToSummarize] = summary;
-                        updatedKb.lastSummarizedTurn = finalKb.playerStats.turn -1; 
+                // Collect all messages that belong to the page being summarized, including the ones just generated for this turn
+                const allMessagesForSummaryCalc = [...gameMessagesBeforePlayerAction, ...newMessagesForThisCycle];
+                const actualMessagesToSummarize = allMessagesForSummaryCalc.filter(
+                    msg => msg.turnNumber >= startTurnOfSummaryPageActual && msg.turnNumber <= endTurnOfSummaryPageActual
+                );
+                
+                if (actualMessagesToSummarize.length > 0) {
+                    try {
+                        const summaryResult = await summarizeTurnHistory(
+                            actualMessagesToSummarize,
+                            finalKbStateForThisTurn.worldConfig?.theme || "Không rõ",
+                            finalKbStateForThisTurn.worldConfig?.playerName || "Người chơi",
+                            logSentPrompt
+                        );
+                        logSummarizationResponse(summaryResult.rawText);
+                        const summary = summaryResult.processedSummary;
+
+                        if (!finalKbStateForThisTurn.pageSummaries) finalKbStateForThisTurn.pageSummaries = {};
+                        finalKbStateForThisTurn.pageSummaries[pageToSummarize] = summary;
+                        finalKbStateForThisTurn.lastSummarizedTurn = turnCompleted;
                         
-                        if (!updatedKb.currentPageHistory.includes(finalKb.playerStats.turn)) {
-                            updatedKb.currentPageHistory.push(finalKb.playerStats.turn);
+                        const nextPageStartTurn = turnCompleted + 1;
+                        if (!finalKbStateForThisTurn.currentPageHistory) finalKbStateForThisTurn.currentPageHistory = [1];
+                        if (!finalKbStateForThisTurn.currentPageHistory.includes(nextPageStartTurn)) {
+                            finalKbStateForThisTurn.currentPageHistory.push(nextPageStartTurn);
                         }
-                        return updatedKb;
-                    });
-                    setCurrentPageDisplay(pageToSummarize + 1);
-                    addRawMessage('page_summary', `${VIETNAMESE.pageSummaryTitle(pageToSummarize)}: ${summary}`, finalKb.playerStats.turn -1); 
-                } catch (summaryError) {
-                    console.error("Error summarizing page:", summaryError);
-                     addRawMessage('error', `Lỗi tóm tắt trang ${pageToSummarize}. Tiếp tục không có tóm tắt.`, finalKb.playerStats.turn);
-                     setKnowledgeBase(prevKb => { 
-                        const updatedKb = JSON.parse(JSON.stringify(prevKb));
-                        if (!updatedKb.currentPageHistory.includes(finalKb.playerStats.turn)) {
-                            updatedKb.currentPageHistory.push(finalKb.playerStats.turn);
+                        
+                        newMessagesForThisCycle.push({
+                            id: 'page-summary-' + Date.now(), type: 'page_summary',
+                            content: `${VIETNAMESE.pageSummaryTitle(pageToSummarize)}: ${summary}`,
+                            timestamp: Date.now(), turnNumber: turnCompleted
+                        });
+                        addMessageAndUpdateState(newMessagesForThisCycle, finalKbStateForThisTurn, () => {
+                            setCurrentPageDisplay(pageToSummarize + 1);
+                            setIsSummarizingNextPageTransition(false);
+                            setIsLoading(false);
+                        });
+                        return; // Exit early as state update is handled in callback
+                    } catch (summaryError) {
+                        console.error("Error summarizing page:", summaryError);
+                         newMessagesForThisCycle.push({
+                            id: 'summary-error-' + Date.now(), type: 'error',
+                            content: `Lỗi tóm tắt trang ${pageToSummarize}. Tiếp tục không có tóm tắt.`,
+                            timestamp: Date.now(), turnNumber: turnCompleted
+                        });
+                        const nextPageStartTurn = turnCompleted + 1;
+                        if (!finalKbStateForThisTurn.currentPageHistory) finalKbStateForThisTurn.currentPageHistory = [1];
+                        if (!finalKbStateForThisTurn.currentPageHistory.includes(nextPageStartTurn)) {
+                            finalKbStateForThisTurn.currentPageHistory.push(nextPageStartTurn);
                         }
-                        return updatedKb;
+                        addMessageAndUpdateState(newMessagesForThisCycle, finalKbStateForThisTurn, () => {
+                            setCurrentPageDisplay(pageToSummarize + 1);
+                             setIsSummarizingNextPageTransition(false);
+                             setIsLoading(false);
+                        });
+                        return; // Exit early
+                    }
+                } else { 
+                     // No actual messages to summarize, but still need to paginate
+                     if (!finalKbStateForThisTurn.pageSummaries) finalKbStateForThisTurn.pageSummaries = {};
+                     finalKbStateForThisTurn.pageSummaries[pageToSummarize] = VIETNAMESE.noContentToSummarize || "Không có nội dung.";
+                     finalKbStateForThisTurn.lastSummarizedTurn = turnCompleted;
+                     const nextPageStartTurn = turnCompleted + 1;
+                     if (!finalKbStateForThisTurn.currentPageHistory) finalKbStateForThisTurn.currentPageHistory = [1];
+                     if (!finalKbStateForThisTurn.currentPageHistory.includes(nextPageStartTurn)) {
+                        finalKbStateForThisTurn.currentPageHistory.push(nextPageStartTurn);
+                     }
+                     newMessagesForThisCycle.push({
+                        id: 'no-content-summary-' + Date.now(), type: 'page_summary',
+                        content: `${VIETNAMESE.pageSummaryTitle(pageToSummarize)}: ${VIETNAMESE.noContentToSummarize || "Không có nội dung."}`,
+                        timestamp: Date.now(), turnNumber: turnCompleted
+                     });
+                     addMessageAndUpdateState(newMessagesForThisCycle, finalKbStateForThisTurn, () => {
+                        setCurrentPageDisplay(pageToSummarize + 1);
+                        setIsSummarizingNextPageTransition(false);
+                        setIsLoading(false);
                     });
-                     setCurrentPageDisplay(pageToSummarize + 1);
-                } finally {
-                    setIsSummarizingNextPageTransition(false);
+                    return; // Exit early
                 }
-            } else {
-                 if (!finalKb.currentPageHistory.includes(finalKb.playerStats.turn)) {
-                    finalKb.currentPageHistory.push(finalKb.playerStats.turn);
-                    setKnowledgeBase(finalKb); 
-                 }
-                 setCurrentPageDisplay(pageToSummarize + 1);
             }
         }
-
+        // If not summarizing or summary already exists, just update state
+        addMessageAndUpdateState(newMessagesForThisCycle, finalKbStateForThisTurn, () => {
+             setIsLoading(false);
+        });
 
     } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
         console.error(err);
-    } finally {
-        setIsLoading(false);
+        // Restore KB to state before this failed action if needed, or simply don't update messages
+        // For now, player action message might remain, but AI response won't. Error will be shown.
+        setIsLoading(false); 
+        if (isAutoPlaying) {
+          setIsAutoPlaying(false);
+          showNotification(VIETNAMESE.autoPlayStoppedOnError || "Đã dừng tự động chơi do có lỗi.", 'error');
+        }
     }
-  };
+  }, [
+      knowledgeBase, 
+      gameMessages, 
+      addMessageAndUpdateState,
+      performTagProcessing, 
+      logSentPrompt,
+      logSummarizationResponse, 
+      getMessagesForPage, 
+      currentPageDisplay,
+      isAutoPlaying,
+      showNotification
+    ]);
   
+  useEffect(() => {
+    let autoPlayTimeoutId: NodeJS.Timeout | undefined;
+
+    if (isAutoPlaying && !isLoading && !isSummarizingNextPageTransition && !isSummarizingOnLoad && currentScreen === GameScreen.Gameplay && currentPageDisplay === totalPages) {
+      const latestMessageWithChoices = [...gameMessages].reverse().find(
+        (msg) => msg.type === 'narration' && msg.choices && msg.choices.length > 0
+      );
+
+      let actionToTake: string | null = null;
+      let isChoiceAction = false;
+      let actionType: PlayerActionInputType = 'action';
+
+      if (latestMessageWithChoices && latestMessageWithChoices.choices && latestMessageWithChoices.choices.length > 0) {
+        actionToTake = latestMessageWithChoices.choices[0].text; 
+        isChoiceAction = true;
+        actionType = 'action';
+      } else {
+        actionToTake = VIETNAMESE.autoPlayContinueAction || "Tiếp tục diễn biến.";
+        isChoiceAction = false;
+        actionType = 'story'; 
+      }
+
+      if (actionToTake) {
+        autoPlayTimeoutId = setTimeout(() => {
+          if (isAutoPlaying && !isLoading && !isSummarizingNextPageTransition && !isSummarizingOnLoad && currentScreen === GameScreen.Gameplay && currentPageDisplay === totalPages) {
+            handlePlayerAction(actionToTake!, isChoiceAction, actionType, 'default');
+          }
+        }, 1000); 
+      }
+    }
+    return () => {
+      if (autoPlayTimeoutId) {
+        clearTimeout(autoPlayTimeoutId);
+      }
+    };
+  }, [
+    isAutoPlaying, 
+    isLoading, 
+    gameMessages, 
+    currentScreen, 
+    handlePlayerAction,
+    isSummarizingNextPageTransition,
+    isSummarizingOnLoad,
+    currentPageDisplay,
+    totalPages
+  ]);
+
+  const handleToggleAutoPlay = () => {
+    setIsAutoPlaying(prev => {
+      const newAutoPlayingState = !prev;
+      showNotification(newAutoPlayingState ? VIETNAMESE.autoPlayEnabledNotification : VIETNAMESE.autoPlayDisabledNotification, 'info');
+      return newAutoPlayingState;
+    });
+  };
+
   const handleStartEditMessage = (messageId: string) => {
     setMessageIdBeingEdited(messageId);
   };
@@ -801,6 +1011,7 @@ export const App: React.FC = () => {
   const handleLoadGame = async (saveId: string) => {
     setIsLoading(true); 
     setError(null);
+    setIsSummarizingOnLoad(false); 
     try {
         let gameData: SaveGameData | null = null;
         if (storageSettings.storageType === 'cloud') {
@@ -811,53 +1022,79 @@ export const App: React.FC = () => {
         }
 
         if (gameData) {
-            setKnowledgeBase(gameData.knowledgeBase);
-            setGameMessages(gameData.gameMessages);
-            setRawAiResponsesLog([]); 
-            setSentPromptsLog([]);
-            setLatestPromptTokenCount(null);
+            setGameMessages(gameData.gameMessages); 
             
-            const loadedTotalPages = Math.max(1, gameData.knowledgeBase.currentPageHistory?.length || 1);
-            setCurrentPageDisplay(loadedTotalPages); 
-
             const loadedKb = gameData.knowledgeBase;
-            const requiredSummariesUpTo = (loadedKb.currentPageHistory?.length || 1) -1;
+            const requiredSummariesUpToPage = Math.floor( ( (loadedKb.lastSummarizedTurn || 0) ) / TURNS_PER_PAGE );
             let missingSummaryFound = false;
-            for (let i = 1; i <= requiredSummariesUpTo; i++) {
+
+            for (let i = 1; i <= requiredSummariesUpToPage; i++) {
                 if (!loadedKb.pageSummaries?.[i]) {
                     missingSummaryFound = true;
                     break;
                 }
             }
+            const lastCompletedPageByTurn = Math.floor( (loadedKb.playerStats.turn) / TURNS_PER_PAGE );
+            if (lastCompletedPageByTurn > 0 && !loadedKb.pageSummaries?.[lastCompletedPageByTurn] && loadedKb.playerStats.turn % TURNS_PER_PAGE === 0 && (loadedKb.lastSummarizedTurn || 0) < loadedKb.playerStats.turn) {
+                 missingSummaryFound = true;
+            }
+
 
             if(missingSummaryFound) {
                 setIsSummarizingOnLoad(true);
-                addRawMessage('system', VIETNAMESE.creatingMissingSummary, loadedKb.playerStats.turn);
+                const tempGameMessagesWithNotice = [...gameData.gameMessages, {
+                    id: 'missing-summary-notice-' + Date.now(),
+                    type: 'system' as const,
+                    content: VIETNAMESE.creatingMissingSummary,
+                    timestamp: Date.now(),
+                    turnNumber: loadedKb.playerStats.turn
+                }];
+                setGameMessages(tempGameMessagesWithNotice);
+                
                 let tempKb = JSON.parse(JSON.stringify(loadedKb));
 
-                for (let pageNum = 1; pageNum <= requiredSummariesUpTo; pageNum++) {
-                    if (!tempKb.pageSummaries?.[pageNum]) {
-                         const messagesForSummary = getMessagesForPage(pageNum, tempKb, gameData.gameMessages);
+                const pagesThatShouldBeSummarized = Math.floor(tempKb.playerStats.turn / TURNS_PER_PAGE);
+
+                for (let pageNum = 1; pageNum <= pagesThatShouldBeSummarized; pageNum++) {
+                    if (!tempKb.pageSummaries?.[pageNum] && (tempKb.lastSummarizedTurn || 0) < (pageNum * TURNS_PER_PAGE) ) {
+                         const startTurn = (pageNum - 1) * TURNS_PER_PAGE + 1;
+                         const endTurn = pageNum * TURNS_PER_PAGE;
+                         const messagesForSummary = tempGameMessagesWithNotice.filter(
+                             msg => msg.turnNumber >= startTurn && msg.turnNumber <= endTurn
+                         );
+
                          if (messagesForSummary.length > 0) {
                             try {
-                                const summary = await summarizeTurnHistory(
+                                const summaryResult = await summarizeTurnHistory(
                                     messagesForSummary,
                                     tempKb.worldConfig?.theme || "Không rõ",
-                                    tempKb.worldConfig?.playerName || "Người chơi"
+                                    tempKb.worldConfig?.playerName || "Người chơi",
+                                    logSentPrompt
                                 );
+                                logSummarizationResponse(summaryResult.rawText);
+                                const summary = summaryResult.processedSummary;
+
                                 if (!tempKb.pageSummaries) tempKb.pageSummaries = {};
                                 tempKb.pageSummaries[pageNum] = summary;
+                                tempKb.lastSummarizedTurn = Math.max(tempKb.lastSummarizedTurn || 0, endTurn);
                             } catch (summaryError) {
                                 console.error(`Error re-summarizing page ${pageNum} on load:`, summaryError);
                             }
+                         } else {
+                            if (!tempKb.pageSummaries) tempKb.pageSummaries = {};
+                            tempKb.pageSummaries[pageNum] = VIETNAMESE.noContentToSummarize;
+                            tempKb.lastSummarizedTurn = Math.max(tempKb.lastSummarizedTurn || 0, endTurn);
                          }
                     }
                 }
                 setKnowledgeBase(tempKb); 
                 setIsSummarizingOnLoad(false);
+            } else {
+                 setKnowledgeBase(loadedKb);
             }
-
-
+            
+            const loadedTotalPages = Math.max(1, loadedKb.currentPageHistory?.length || 1);
+            setCurrentPageDisplay(loadedTotalPages); 
             setCurrentScreen(GameScreen.Gameplay);
             showNotification(VIETNAMESE.gameLoadedSuccess, 'success');
         } else {
@@ -870,6 +1107,7 @@ export const App: React.FC = () => {
         setCurrentScreen(GameScreen.LoadGameSelection); 
     } finally {
         setIsLoading(false);
+        setIsSummarizingOnLoad(false); 
     }
   };
 
@@ -907,13 +1145,18 @@ export const App: React.FC = () => {
   };
   
    const handleRollbackTurn = () => {
-        if (isLoading) { 
-            showNotification("Không thể lùi lượt khi AI đang xử lý. Nút dừng nên được vô hiệu hóa.", 'warning');
+        if (isLoading || isSummarizingNextPageTransition || isSummarizingOnLoad) { 
+            showNotification("Không thể lùi lượt khi hệ thống đang xử lý. Nút dừng nên được vô hiệu hóa.", 'warning');
             return;
         }
 
         if (knowledgeBase.turnHistory && knowledgeBase.turnHistory.length > 0) {
-            if (knowledgeBase.playerStats.turn === 1 && knowledgeBase.turnHistory.length === 1 && knowledgeBase.turnHistory[0].knowledgeBaseSnapshot.playerStats.turn === 0) {
+             const isAtVeryBeginning = knowledgeBase.playerStats.turn === 1 && 
+                                   knowledgeBase.turnHistory.length === 1 && 
+                                   knowledgeBase.turnHistory[0].knowledgeBaseSnapshot.playerStats.turn === 0 &&
+                                   gameMessages.filter(m => m.type === 'player_action' || m.type === 'narration').length <=1; 
+            
+            if (isAtVeryBeginning) {
                  showNotification(VIETNAMESE.cannotRollbackFurther + " (Không thể lùi về trước khi truyện bắt đầu).", 'warning');
                  return;
             }
@@ -966,13 +1209,15 @@ export const App: React.FC = () => {
                   setRawAiResponsesLog([]);
                   setSentPromptsLog([]);
                   setLatestPromptTokenCount(null);
+                  setSummarizationResponsesLog([]);
                   setCurrentPageDisplay(1);
                   setIsAutoPlaying(false);
-                  setMessageIdBeingEdited(null); // Reset edit state on quit
+                  setMessageIdBeingEdited(null); 
                 }}
                 rawAiResponsesLog={rawAiResponsesLog}
                 sentPromptsLog={sentPromptsLog}
                 latestPromptTokenCount={latestPromptTokenCount}
+                summarizationResponsesLog={summarizationResponsesLog}
                 firebaseUser={firebaseUser}
                 onSaveGame={handleSaveGame}
                 isSavingGame={isSavingGame}
@@ -988,7 +1233,7 @@ export const App: React.FC = () => {
                 isCurrentlyActivePage={currentPageDisplay === totalPages}
                 onRollbackTurn={handleRollbackTurn}
                 isAutoPlaying={isAutoPlaying}
-                onToggleAutoPlay={() => setIsAutoPlaying(prev => !prev)}
+                onToggleAutoPlay={handleToggleAutoPlay}
                 styleSettings={styleSettings}
                 onUpdateStyleSettings={(newSettings) => {
                     setStyleSettings(newSettings);

@@ -8,7 +8,8 @@ interface DebugPanelDisplayProps {
   kb: KnowledgeBase;
   sentPromptsLog: string[];
   rawAiResponsesLog: string[];
-  latestPromptTokenCount: number | null;
+  latestPromptTokenCount: number | null | string;
+  summarizationResponsesLog: string[]; // New prop for summary responses
   currentPageDisplay: number;
   totalPages: number;
   isAutoPlaying: boolean;
@@ -26,6 +27,7 @@ const DebugPanelDisplay: React.FC<DebugPanelDisplayProps> = ({
     sentPromptsLog,
     rawAiResponsesLog,
     latestPromptTokenCount,
+    summarizationResponsesLog,
     currentPageDisplay,
     totalPages,
     isAutoPlaying,
@@ -42,7 +44,6 @@ const DebugPanelDisplay: React.FC<DebugPanelDisplayProps> = ({
   });
   const [dimensions, setDimensions] = useState({ width: INITIAL_WIDTH, height: INITIAL_HEIGHT });
   
-  // Stores initial mouse position and panel position/dimensions at the start of a drag/resize
   const interactionStartRef = useRef({ 
     mouseX: 0, 
     mouseY: 0, 
@@ -52,17 +53,16 @@ const DebugPanelDisplay: React.FC<DebugPanelDisplayProps> = ({
     panelH: 0 
   });
 
-  // Effect to set initial position once, responsive to window size
   useEffect(() => {
     setPosition({
       top: Math.max(0, window.innerHeight - dimensions.height - 16),
       left: Math.max(0, window.innerWidth - dimensions.width - 16),
     });
-  }, []); // Runs once on mount
+  }, []); 
 
 
   const handleMouseDownDrag = useCallback((e: React.MouseEvent<HTMLHeadingElement>) => {
-    if (e.button !== 0) return; // Only main button
+    if (e.button !== 0) return; 
     setIsDragging(true);
     interactionStartRef.current = {
       mouseX: e.clientX,
@@ -72,7 +72,7 @@ const DebugPanelDisplay: React.FC<DebugPanelDisplayProps> = ({
       panelW: dimensions.width,
       panelH: dimensions.height,
     };
-    document.body.style.userSelect = 'none'; // Prevent text selection during drag
+    document.body.style.userSelect = 'none'; 
     e.preventDefault();
   }, [position, dimensions]);
 
@@ -99,7 +99,6 @@ const DebugPanelDisplay: React.FC<DebugPanelDisplayProps> = ({
       let newLeft = interactionStartRef.current.panelX + deltaX;
       let newTop = interactionStartRef.current.panelY + deltaY;
 
-      // Constrain within viewport
       newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - dimensions.width));
       newTop = Math.max(0, Math.min(newTop, window.innerHeight - dimensions.height));
       
@@ -111,11 +110,9 @@ const DebugPanelDisplay: React.FC<DebugPanelDisplayProps> = ({
       let newWidth = interactionStartRef.current.panelW + deltaX;
       let newHeight = interactionStartRef.current.panelH + deltaY;
 
-      // Enforce minimum dimensions
       newWidth = Math.max(MIN_WIDTH, newWidth);
       newHeight = Math.max(MIN_HEIGHT, newHeight);
 
-      // Constrain within viewport (bottom and right edges)
       newWidth = Math.min(newWidth, window.innerWidth - position.left);
       newHeight = Math.min(newHeight, window.innerHeight - position.top);
       
@@ -126,7 +123,7 @@ const DebugPanelDisplay: React.FC<DebugPanelDisplayProps> = ({
   const handleMouseUp = useCallback(() => {
     setIsDragging(false);
     setIsResizing(false);
-    document.body.style.userSelect = ''; // Re-enable text selection
+    document.body.style.userSelect = ''; 
   }, []);
 
   useEffect(() => {
@@ -143,6 +140,21 @@ const DebugPanelDisplay: React.FC<DebugPanelDisplayProps> = ({
       document.body.style.userSelect = '';
     };
   }, [isDragging, isResizing, handleMouseMove, handleMouseUp]);
+
+  const displayTokenInfo = () => {
+    if (latestPromptTokenCount === null && sentPromptsLog.length === 0) return 'N/A';
+    if (typeof latestPromptTokenCount === 'string') return latestPromptTokenCount;
+    if (typeof latestPromptTokenCount === 'number') return latestPromptTokenCount.toString();
+    return 'N/A'; 
+  };
+
+  const getTokenDisplayClass = () => {
+    if (typeof latestPromptTokenCount === 'number') {
+      return "font-semibold text-yellow-300";
+    }
+    return "italic text-gray-400"; 
+  };
+
 
   return (
     <div 
@@ -162,14 +174,14 @@ const DebugPanelDisplay: React.FC<DebugPanelDisplayProps> = ({
         Bảng Điều Khiển Debug
       </h4>
 
-      <div className="p-3 overflow-y-auto flex-grow custom-scrollbar"> {/* Inner scrollable content area */}
+      <div className="p-3 overflow-y-auto flex-grow custom-scrollbar"> 
         <div className="mb-3 text-xs text-gray-400">
           Player: C{kb.playerStats.level} ({kb.playerStats.realm}), Lượt: {kb.playerStats.turn}<br/>
           Trang: {currentPageDisplay}/{totalPages}, Lượt tóm tắt cuối: {kb.lastSummarizedTurn || 'Chưa có'}<br/>
           Lịch sử trang (bắt đầu từ lượt): {JSON.stringify(kb.currentPageHistory)}<br/>
           Tóm tắt có sẵn cho trang: {kb.pageSummaries ? Object.keys(kb.pageSummaries).join(', ') : 'Không có'}<br/>
           Lịch sử lùi lượt: {kb.turnHistory ? kb.turnHistory.length : 0} mục<br/>
-          Token Prompt Gần Nhất: <span className={latestPromptTokenCount === null ? "italic" : "font-semibold text-yellow-300"}>{latestPromptTokenCount === null && sentPromptsLog.length > 0 ? "Đang tính..." : latestPromptTokenCount ?? 'N/A'}</span>
+          Token Prompt Gần Nhất: <span className={getTokenDisplayClass()}>{displayTokenInfo()}</span>
         </div>
 
         <Button
@@ -182,7 +194,7 @@ const DebugPanelDisplay: React.FC<DebugPanelDisplayProps> = ({
         </Button>
 
         <div className="mb-4">
-          <h5 className="text-md font-semibold text-sky-300 mb-1">Nhật Ký Prompt Đã Gửi (10 gần nhất)</h5>
+          <h5 className="text-md font-semibold text-sky-300 mb-1">Nhật Ký Prompt (Gameplay &amp; Tóm tắt) ({sentPromptsLog.length} gần nhất)</h5>
           {sentPromptsLog.length === 0 ? (
             <p className="text-xs italic text-gray-500">Chưa có prompt nào được gửi.</p>
           ) : (
@@ -201,16 +213,16 @@ const DebugPanelDisplay: React.FC<DebugPanelDisplayProps> = ({
           )}
         </div>
 
-        <div>
-          <h5 className="text-md font-semibold text-lime-300 mb-1">Nhật Ký Phản Hồi Từ AI (50 gần nhất)</h5>
+        <div className="mb-4">
+          <h5 className="text-md font-semibold text-lime-300 mb-1">Nhật Ký Phản Hồi Gameplay Từ AI ({rawAiResponsesLog.length} gần nhất)</h5>
           {rawAiResponsesLog.length === 0 ? (
-            <p className="text-xs italic text-gray-500">Chưa có phản hồi nào từ AI.</p>
+            <p className="text-xs italic text-gray-500">Chưa có phản hồi gameplay nào từ AI.</p>
           ) : (
             <div className="space-y-1 max-h-40 overflow-y-auto custom-scrollbar text-xs">
               {rawAiResponsesLog.map((responseEntry, index) => (
                  <details key={`raw-${index}`} className="bg-gray-800 rounded group">
                   <summary className="p-1.5 text-lime-200 cursor-pointer text-[11px] group-open:font-semibold">
-                    Phản hồi AI #{rawAiResponsesLog.length - index} (Nhấn để xem)
+                    Phản hồi Gameplay #{rawAiResponsesLog.length - index} (Nhấn để xem)
                   </summary>
                   <pre className="p-1.5 bg-gray-850 text-lime-100 whitespace-pre-wrap break-all text-[10px] leading-relaxed max-h-80 overflow-y-auto custom-scrollbar">
                     {responseEntry}
@@ -220,6 +232,27 @@ const DebugPanelDisplay: React.FC<DebugPanelDisplayProps> = ({
             </div>
           )}
         </div>
+        
+        <div>
+          <h5 className="text-md font-semibold text-purple-300 mb-1">Nhật Ký Phản Hồi Tóm Tắt Từ AI ({summarizationResponsesLog.length} gần nhất)</h5>
+          {summarizationResponsesLog.length === 0 ? (
+            <p className="text-xs italic text-gray-500">Chưa có phản hồi tóm tắt nào từ AI.</p>
+          ) : (
+            <div className="space-y-1 max-h-40 overflow-y-auto custom-scrollbar text-xs">
+              {summarizationResponsesLog.map((responseEntry, index) => (
+                 <details key={`summary-resp-${index}`} className="bg-gray-800 rounded group">
+                  <summary className="p-1.5 text-purple-200 cursor-pointer text-[11px] group-open:font-semibold">
+                    Phản hồi Tóm Tắt #{summarizationResponsesLog.length - index} (Nhấn để xem)
+                  </summary>
+                  <pre className="p-1.5 bg-gray-850 text-purple-100 whitespace-pre-wrap break-all text-[10px] leading-relaxed max-h-80 overflow-y-auto custom-scrollbar">
+                    {responseEntry}
+                  </pre>
+                </details>
+              ))}
+            </div>
+          )}
+        </div>
+
       </div>
       <div 
         className="absolute bg-yellow-600 opacity-50 hover:opacity-100"

@@ -1,10 +1,11 @@
+
 import React, { useState, useCallback, ChangeEvent, useRef } from 'react';
 import { GameScreen, WorldSettings, StartingSkill, StartingItem, StartingNPC, StartingLore, StartingLocation } from '../types'; // Added StartingLocation
 import Button from './ui/Button';
 import Spinner from './ui/Spinner';
 import Modal from './ui/Modal'; // Import Modal
 import { VIETNAMESE, DEFAULT_WORLD_SETTINGS, MAX_TOKENS_FANFIC } from '../constants';
-import { generateWorldDetailsFromStory, generateFanfictionWorldDetails, countTokens } from '../services/geminiService';
+import { generateWorldDetailsFromStory, generateFanfictionWorldDetails, countTokens, getApiSettings } from '../services/geminiService';
 import InputField from './ui/InputField';
 
 interface GameSetupScreenProps {
@@ -220,10 +221,11 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
   
   const handleFanficFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
     setGeneratorMessage(null);
-    setRawApiResponseText(null); // Clear raw response
+    setRawApiResponseText(null);
     setFanficTokenCount(null);
     setFanficFileContent(null);
     const file = e.target.files?.[0];
+
     if (file) {
       if (file.type !== "text/plain") {
         setGeneratorMessage({text: "Vui lòng chọn file .txt hợp lệ.", type: 'error'});
@@ -232,28 +234,47 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
         return;
       }
       setFanficFile(file);
-      setIsLoadingTokens(true);
-      setGeneratorMessage({text: VIETNAMESE.tokenCountCalculating, type: 'info'});
-      try {
-        const text = await file.text();
-        setFanficFileContent(text);
-        const tokens = await countTokens(text);
-        setFanficTokenCount(tokens);
-        if (tokens > MAX_TOKENS_FANFIC) {
-          setGeneratorMessage({text: VIETNAMESE.tokenCountExceededError(MAX_TOKENS_FANFIC), type: 'error'});
-        } else {
-          setGeneratorMessage({text: `${VIETNAMESE.tokenCountLabel} ${tokens.toLocaleString()}`, type: 'success'});
-        }
-      } catch (err) {
-        console.error("Error processing fanfic file:", err);
-        setGeneratorMessage({text: VIETNAMESE.tokenCountError + (err instanceof Error ? ` ${err.message}` : ''), type: 'error'});
-        setFanficFileContent(null);
-        setFanficTokenCount(null);
-      } finally {
+
+      const { model: currentModel } = getApiSettings();
+
+      if (currentModel === 'gemini-1.5-flash') {
         setIsLoadingTokens(false);
+        setFanficTokenCount(0); // Placeholder to bypass token limit checks
+        setGeneratorMessage({ text: "Đếm token bị vô hiệu hóa cho model gemini-1.5-flash.", type: 'info' });
+        try {
+          const text = await file.text();
+          setFanficFileContent(text);
+        } catch (err) {
+          console.error("Error reading fanfic file:", err);
+          setGeneratorMessage({text: "Lỗi khi đọc file." + (err instanceof Error ? ` ${err.message}` : ''), type: 'error'});
+          setFanficFileContent(null);
+        }
+      } else {
+        setIsLoadingTokens(true);
+        setGeneratorMessage({text: VIETNAMESE.tokenCountCalculating, type: 'info'});
+        try {
+          const text = await file.text();
+          setFanficFileContent(text);
+          const tokens = await countTokens(text);
+          setFanficTokenCount(tokens);
+          if (tokens > MAX_TOKENS_FANFIC) {
+            setGeneratorMessage({text: VIETNAMESE.tokenCountExceededError(MAX_TOKENS_FANFIC), type: 'error'});
+          } else {
+            setGeneratorMessage({text: `${VIETNAMESE.tokenCountLabel} ${tokens.toLocaleString()}`, type: 'success'});
+          }
+        } catch (err) {
+          console.error("Error processing fanfic file:", err);
+          setGeneratorMessage({text: VIETNAMESE.tokenCountError + (err instanceof Error ? ` ${err.message}` : ''), type: 'error'});
+          setFanficFileContent(null);
+          setFanficTokenCount(null);
+        } finally {
+          setIsLoadingTokens(false);
+        }
       }
     } else {
       setFanficFile(null);
+      setFanficFileContent(null);
+      setFanficTokenCount(null);
     }
   };
 
@@ -261,6 +282,8 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
     let sourceMaterial: string = '';
     let isSourceContent = false;
     setRawApiResponseText(null); // Clear previous raw response
+
+    const { model: currentModel } = getApiSettings();
 
     if (fanficSourceType === 'name') {
       if (!fanficStoryName.trim()) {
@@ -273,7 +296,8 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
         setGeneratorMessage({ text: VIETNAMESE.pleaseSelectFile, type: 'error' });
         return;
       }
-      if (fanficTokenCount && fanficTokenCount > MAX_TOKENS_FANFIC) {
+      // Skip token limit check for gemini-1.5-flash
+      if (currentModel !== 'gemini-1.5-flash' && fanficTokenCount && fanficTokenCount > MAX_TOKENS_FANFIC) {
         setGeneratorMessage({ text: VIETNAMESE.tokenCountExceededError(MAX_TOKENS_FANFIC), type: 'error'});
         return;
       }
@@ -338,6 +362,13 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
     onSetupComplete(finalSettings);
     setCurrentScreen(GameScreen.Gameplay);
   };
+  
+  const { model: currentFanficModel } = getApiSettings();
+  const isFanficTokenLimitExceeded = fanficSourceType === 'file' && 
+                                   currentFanficModel !== 'gemini-1.5-flash' && 
+                                   fanficTokenCount !== null && 
+                                   fanficTokenCount > MAX_TOKENS_FANFIC;
+
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gray-800 p-2 sm:p-4 md:p-6">
@@ -417,7 +448,7 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
                     onChange={handleFanficFileChange}
                     className="w-full text-xs sm:text-sm text-gray-300 bg-gray-700 border border-gray-600 rounded-md file:mr-2 file:py-1.5 file:px-2 sm:file:mr-3 sm:file:py-2 sm:file:px-3 file:rounded-l-md file:border-0 file:text-xs sm:file:text-sm file:font-semibold file:bg-green-600 file:text-white hover:file:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
                   />
-                  {isLoadingTokens && <Spinner size="sm" text={VIETNAMESE.tokenCountCalculating} className="mt-2" />}
+                  {isLoadingTokens && currentFanficModel !== 'gemini-1.5-flash' && <Spinner size="sm" text={VIETNAMESE.tokenCountCalculating} className="mt-2" />}
                 </div>
               )}
                <InputField
@@ -472,7 +503,7 @@ const GameSetupScreen: React.FC<GameSetupScreenProps> = ({ setCurrentScreen, onS
                 loadingText={VIETNAMESE.generatingFanficDetails}
                 className="mt-3 bg-green-600 hover:bg-green-700 focus:ring-green-500 w-full text-sm sm:text-base"
                 size="md"
-                disabled={isLoadingTokens || (fanficSourceType === 'file' && fanficTokenCount !== null && fanficTokenCount > MAX_TOKENS_FANFIC)}
+                disabled={isLoadingTokens || isFanficTokenLimitExceeded}
               >
                 {VIETNAMESE.generateFanficButton}
               </Button>

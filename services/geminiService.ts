@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, GenerateContentResponse, HarmCategory, HarmBlockThreshold, CountTokensResponse } from "@google/genai";
 import { KnowledgeBase, ParsedAiResponse, AiChoice, WorldSettings, ApiConfig, SafetySetting, PlayerActionInputType, ResponseLength, StartingSkill, StartingItem, StartingNPC, StartingLore, GameMessage, GeneratedWorldElements, StartingLocation } from '../types'; // Added StartingLocation
 import { PROMPT_TEMPLATES, VIETNAMESE, API_SETTINGS_STORAGE_KEY, DEFAULT_MODEL_ID, HARM_CATEGORIES, DEFAULT_API_CONFIG, MAX_TOKENS_FANFIC } from '../constants';
@@ -141,7 +142,7 @@ export const parseGeneratedWorldDetails = (responseText: string): GeneratedWorld
   const GWD_ITEM = 'GENERATED_ITEM:';
   const GWD_NPC = 'GENERATED_NPC:';
   const GWD_LORE = 'GENERATED_LORE:';
-  const GWD_LOCATION = 'GENERATED_LOCATION:'; // New tag prefix
+  const GWD_LOCATION = 'GENERATED_LOCATION:'; 
   const GWD_PLAYER_NAME = 'GENERATED_PLAYER_NAME:';
   const GWD_PLAYER_PERSONALITY = 'GENERATED_PLAYER_PERSONALITY:';
   const GWD_PLAYER_BACKSTORY = 'GENERATED_PLAYER_BACKSTORY:';
@@ -158,7 +159,7 @@ export const parseGeneratedWorldDetails = (responseText: string): GeneratedWorld
     startingItems: [],
     startingNPCs: [],
     startingLore: [],
-    startingLocations: [], // Ensure startingLocations is initialized
+    startingLocations: [], 
   };
 
   const originalStorySummaryRegex = /\[GENERATED_ORIGINAL_STORY_SUMMARY:\s*text\s*=\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')\s*\]/is;
@@ -365,10 +366,10 @@ export const generateNextTurn = async (
 
 export const generateWorldDetailsFromStory = async (
   storyIdea: string,
-  isNsfwIdea: boolean, // New parameter
+  isNsfwIdea: boolean, 
   onPromptConstructed?: (prompt: string) => void
 ): Promise<{response: GeneratedWorldElements, rawText: string}> => {
-  const prompt = PROMPT_TEMPLATES.generateWorldDetails(storyIdea, isNsfwIdea); // Pass isNsfwIdea
+  const prompt = PROMPT_TEMPLATES.generateWorldDetails(storyIdea, isNsfwIdea); 
   const rawText = await callGeminiAPI(prompt, onPromptConstructed);
   const parsedResponse = parseGeneratedWorldDetails(rawText);
   return {response: parsedResponse, rawText};
@@ -378,10 +379,10 @@ export const generateFanfictionWorldDetails = async (
   sourceMaterial: string,
   isSourceContent: boolean,
   playerInputDescription?: string,
-  isNsfwIdea?: boolean, // New parameter
+  isNsfwIdea?: boolean, 
   onPromptConstructed?: (prompt: string) => void
 ): Promise<{response: GeneratedWorldElements, rawText: string}> => {
-  const prompt = PROMPT_TEMPLATES.generateFanfictionWorldDetails(sourceMaterial, isSourceContent, playerInputDescription, isNsfwIdea); // Pass isNsfwIdea
+  const prompt = PROMPT_TEMPLATES.generateFanfictionWorldDetails(sourceMaterial, isSourceContent, playerInputDescription, isNsfwIdea); 
   const rawText = await callGeminiAPI(prompt, onPromptConstructed);
   const parsedResponse = parseGeneratedWorldDetails(rawText);
   return {response: parsedResponse, rawText};
@@ -391,18 +392,22 @@ export const summarizeTurnHistory = async (
   messagesToSummarize: GameMessage[],
   worldTheme: string,
   playerName: string,
-  onPromptConstructed?: (prompt: string) => void
-): Promise<string> => {
+  onPromptConstructed?: (constructedPrompt: string) => void
+): Promise<{ rawText: string, processedSummary: string }> => {
   if (!messagesToSummarize || messagesToSummarize.length === 0) {
-    return "Không có diễn biến nào đáng kể trong trang này.";
+    const noContentMsg = VIETNAMESE.noContentToSummarize || "Không có diễn biến nào đáng kể trong trang này.";
+    return { rawText: noContentMsg, processedSummary: noContentMsg };
   }
   const prompt = PROMPT_TEMPLATES.summarizePage(messagesToSummarize, worldTheme, playerName);
+
   try {
-    const rawSummary = await callGeminiAPI(prompt, onPromptConstructed);
-    return rawSummary.replace(/```json\s*|\s*```/g, '').trim();
+    const rawText = await callGeminiAPI(prompt, onPromptConstructed);
+    const processedSummary = rawText.replace(/```json\s*|\s*```/g, '').trim();
+    return { rawText, processedSummary };
   } catch (error) {
     console.error("Error generating page summary:", error);
-    return `Lỗi tóm tắt trang: ${error instanceof Error ? error.message : "Không rõ"}`;
+    const errorMsg = `Lỗi tóm tắt trang: ${error instanceof Error ? error.message : "Không rõ"}`;
+    return { rawText: `Error in summarizeTurnHistory: ${errorMsg}`, processedSummary: errorMsg };
   }
 };
 

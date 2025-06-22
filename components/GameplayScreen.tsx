@@ -25,7 +25,8 @@ interface GameplayScreenProps {
   onQuit: () => void;
   rawAiResponsesLog: string[];
   sentPromptsLog: string[];
-  latestPromptTokenCount: number | null;
+  latestPromptTokenCount: number | null | string; 
+  summarizationResponsesLog: string[]; // Added for summary responses
   firebaseUser: FirebaseUser | null;
   onSaveGame: () => Promise<void>;
   isSavingGame: boolean;
@@ -58,13 +59,14 @@ const escapeRegExp = (string: string): string => {
 // --- Main Gameplay Screen Component ---
 const GameplayScreen: React.FC<GameplayScreenProps> = ({
     knowledgeBase,
-    gameMessages, // This is allGameMessages from App.tsx
+    gameMessages, 
     isLoading,
     onPlayerAction,
     onQuit,
     rawAiResponsesLog,
     sentPromptsLog,
     latestPromptTokenCount,
+    summarizationResponsesLog, 
     firebaseUser,
     onSaveGame,
     isSavingGame,
@@ -127,16 +129,12 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
   const displayedMessages = getMessagesForPage(currentPageDisplay);
 
   useEffect(() => {
-    // Scroll to bottom if on the current "live" page (last page of content)
-    // This triggers when new messages are added to the live page, or when navigating to it.
     if (currentPageDisplay === totalPages) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [gameMessages.length, currentPageDisplay, totalPages]);
   
   useEffect(() => {
-    // This effect runs once on mount to ensure panels start closed.
-    // It addresses the issue where panels might appear open initially.
     setIsCharPanelOpen(false);
     setIsQuestsPanelOpen(false);
     setIsWorldPanelOpen(false);
@@ -156,7 +154,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
         setIsActionTypeDropdownOpen(false);
         setIsResponseLengthDropdownOpen(false);
         setIsStyleSettingsModalOpen(false);
-        if (messageIdBeingEdited) { // Also cancel edit on ESC
+        if (messageIdBeingEdited) { 
           onCancelEditMessage();
           setCurrentEditText('');
         }
@@ -513,7 +511,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
                         </button>
                       )}
                     {messageIdBeingEdited === msg.id ? (
-                      <div className="mt-1"> {/* This div doesn't need w-full, its parent (with messageBaseClass) will handle it */}
+                      <div className="mt-1"> 
                         <textarea
                           value={currentEditText}
                           onChange={(e) => setCurrentEditText(e.target.value)}
@@ -854,6 +852,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
                             sentPromptsLog={sentPromptsLog}
                             rawAiResponsesLog={rawAiResponsesLog}
                             latestPromptTokenCount={latestPromptTokenCount}
+                            summarizationResponsesLog={summarizationResponsesLog}
                             currentPageDisplay={currentPageDisplay}
                             totalPages={totalPages}
                             isAutoPlaying={isAutoPlaying}
