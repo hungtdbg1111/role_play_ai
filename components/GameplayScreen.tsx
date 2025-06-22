@@ -100,13 +100,15 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
   const [isStyleSettingsModalOpen, setIsStyleSettingsModalOpen] = useState(false);
   const [showAiSuggestions, setShowAiSuggestions] = useState(true); 
 
-  const [selectedItem, setSelectedItem] = useState<Item | null>(null);
-  const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
-  const [selectedQuest, setSelectedQuest] = useState<Quest | null>(null);
-  const [selectedNpc, setSelectedNpc] = useState<NPC | null>(null);
-  const [selectedLocation, setSelectedLocation] = useState<GameLocation | null>(null);
-  const [selectedLore, setSelectedLore] = useState<WorldLoreEntry | null>(null);
-  const [selectedCompanion, setSelectedCompanion] = useState<Companion | null>(null);
+  // Store IDs for selected entities to ensure data freshness from knowledgeBase
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
+  const [selectedQuestId, setSelectedQuestId] = useState<string | null>(null);
+  const [selectedNpcId, setSelectedNpcId] = useState<string | null>(null);
+  const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
+  const [selectedLoreId, setSelectedLoreId] = useState<string | null>(null);
+  const [selectedCompanionId, setSelectedCompanionId] = useState<string | null>(null);
+
 
   const [currentActionType, setCurrentActionType] = useState<PlayerActionInputType>('action');
   const [isActionTypeDropdownOpen, setIsActionTypeDropdownOpen] = useState(false);
@@ -222,14 +224,24 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
 
 
   const closeModal = () => {
-    setSelectedItem(null);
-    setSelectedSkill(null);
-    setSelectedQuest(null);
-    setSelectedNpc(null);
-    setSelectedLocation(null);
-    setSelectedLore(null);
-    setSelectedCompanion(null);
+    setSelectedItemId(null);
+    setSelectedSkillId(null);
+    setSelectedQuestId(null);
+    setSelectedNpcId(null);
+    setSelectedLocationId(null);
+    setSelectedLoreId(null);
+    setSelectedCompanionId(null);
   };
+
+  // Retrieve full entity objects from knowledgeBase using stored IDs for modals
+  const selectedItem = knowledgeBase.inventory.find(i => i.id === selectedItemId);
+  const selectedSkill = knowledgeBase.playerSkills.find(s => s.id === selectedSkillId);
+  const selectedQuest = knowledgeBase.allQuests.find(q => q.id === selectedQuestId);
+  const selectedNpc = knowledgeBase.discoveredNPCs.find(n => n.id === selectedNpcId);
+  const selectedLocation = knowledgeBase.discoveredLocations.find(l => l.id === selectedLocationId);
+  const selectedLore = knowledgeBase.worldLore.find(l => l.id === selectedLoreId);
+  const selectedCompanion = knowledgeBase.companions.find(c => c.id === selectedCompanionId);
+
 
   const handleKeywordClick = useCallback((
     event: React.MouseEvent<HTMLSpanElement>,
@@ -395,15 +407,17 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
     setCurrentEditText('');
   };
 
+  const gameTitleDisplay = knowledgeBase.manualSaveName || knowledgeBase.worldConfig?.saveGameName || knowledgeBase.worldConfig?.theme || "Role Play AI";
+
 
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-gray-100 p-2 sm:p-4">
       <header className="mb-2 sm:mb-4 flex flex-col sm:flex-row justify-between items-center flex-shrink-0 gap-2">
         <h1 
           className="text-xl sm:text-2xl md:text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-green-400 via-cyan-500 to-blue-600 truncate max-w-xs sm:max-w-sm md:max-w-md lg:max-w-lg xl:max-w-xl"
-          title={knowledgeBase.worldConfig?.theme || "Role Play AI"}
+          title={gameTitleDisplay}
         >
-          {knowledgeBase.worldConfig?.theme || "Role Play AI"}
+          {gameTitleDisplay}
         </h1>
         <div className="flex space-x-1 sm:space-x-2 flex-wrap gap-y-1 sm:gap-y-2 justify-center sm:justify-end">
             <Button onClick={() => setIsCharPanelOpen(true)} variant={isCharPanelOpen ? "primary" : "secondary"} size="sm" aria-pressed={isCharPanelOpen} disabled={isSummarizing} className="px-2 sm:px-3">
@@ -515,7 +529,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
                         <textarea
                           value={currentEditText}
                           onChange={(e) => setCurrentEditText(e.target.value)}
-                          className="w-full p-2 text-sm bg-gray-600 border border-gray-500 rounded-md focus:ring-1 focus:ring-indigo-400 focus:border-indigo-400 text-gray-100 placeholder-gray-400 min-h-[480px]"
+                          className="w-full p-2 text-sm bg-gray-600 border border-gray-500 rounded-md focus:ring-1 focus:ring-indigo-400 focus:border-indigo-400 text-gray-100 placeholder-gray-400 min-h-[80px]" // Adjusted min-height for edit
                           rows={Math.max(3, currentEditText.split('\n').length)}
                         />
                         <div className="flex justify-end space-x-2 mt-2">
@@ -701,23 +715,23 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
       <OffCanvasPanel isOpen={isCharPanelOpen} onClose={() => setIsCharPanelOpen(false)} title={VIETNAMESE.characterPanelTitle} position="right">
           <CharacterSidePanel
             knowledgeBase={knowledgeBase}
-            onItemClick={(item) => { setSelectedItem(item); setIsCharPanelOpen(false); }}
-            onSkillClick={(skill) => { setSelectedSkill(skill); setIsCharPanelOpen(false); }}
+            onItemClick={(item) => { setSelectedItemId(item.id); setIsCharPanelOpen(false); }}
+            onSkillClick={(skill) => { setSelectedSkillId(skill.id); setIsCharPanelOpen(false); }}
           />
       </OffCanvasPanel>
       <OffCanvasPanel isOpen={isQuestsPanelOpen} onClose={() => setIsQuestsPanelOpen(false)} title={VIETNAMESE.questsPanelTitle} position="right">
         <QuestsSidePanel
             quests={knowledgeBase.allQuests}
-            onQuestClick={(quest) => { setSelectedQuest(quest); setIsQuestsPanelOpen(false); }}
+            onQuestClick={(quest) => { setSelectedQuestId(quest.id); setIsQuestsPanelOpen(false); }}
           />
       </OffCanvasPanel>
       <OffCanvasPanel isOpen={isWorldPanelOpen} onClose={() => setIsWorldPanelOpen(false)} title={VIETNAMESE.worldPanelTitle} position="right">
         <WorldSidePanel
             knowledgeBase={knowledgeBase}
-            onNpcClick={(npc) => { setSelectedNpc(npc); setIsWorldPanelOpen(false); }}
-            onLocationClick={(location) => { setSelectedLocation(location); setIsWorldPanelOpen(false); }}
-            onLoreClick={(lore) => { setSelectedLore(lore); setIsWorldPanelOpen(false); }}
-            onCompanionClick={(companion) => { setSelectedCompanion(companion); setIsWorldPanelOpen(false); }}
+            onNpcClick={(npc) => { setSelectedNpcId(npc.id); setIsWorldPanelOpen(false); }}
+            onLocationClick={(location) => { setSelectedLocationId(location.id); setIsWorldPanelOpen(false); }}
+            onLoreClick={(lore) => { setSelectedLoreId(lore.id); setIsWorldPanelOpen(false); }}
+            onCompanionClick={(companion) => { setSelectedCompanionId(companion.id); setIsWorldPanelOpen(false); }}
           />
       </OffCanvasPanel>
 
@@ -788,20 +802,34 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
           <div className="space-y-2 text-sm">
             <p><strong className="text-indigo-300">Tên:</strong> {selectedQuest.title}</p>
             {selectedQuest.description && <p><strong className="text-indigo-300">Mô tả:</strong> {selectedQuest.description}</p>}
-            <p><strong className="text-indigo-300">Trạng thái:</strong>
-              {selectedQuest.status === 'active' ? "Đang làm" : selectedQuest.status === 'completed' ? "Hoàn thành" : "Thất bại"}
+             <p><strong className="text-indigo-300">Trạng thái:</strong>
+                {selectedQuest.status === 'active' ? "Đang làm" :
+                 selectedQuest.status === 'completed' ? <span className="text-green-400 font-semibold">Hoàn thành</span> :
+                 <span className="text-red-400 font-semibold">Thất bại</span>
+                }
             </p>
             <p className="font-semibold text-indigo-300 mt-2">Mục tiêu:</p>
             {selectedQuest.objectives.length > 0 ? (
               <ul className="list-none pl-0 space-y-1">
                 {selectedQuest.objectives.map(obj => (
-                  <li key={obj.id} className={`flex items-center text-xs ${obj.completed ? 'text-green-400' : 'text-gray-300'}`}>
-                    {obj.completed && (
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 mr-1.5 flex-shrink-0">
+                  <li key={obj.id} className={`flex items-center text-xs 
+                    ${obj.completed && selectedQuest.status !== 'failed' ? 'text-green-400' : (selectedQuest.status === 'failed' ? 'text-red-400 opacity-80' : 'text-gray-300')}`}>
+                    {obj.completed && selectedQuest.status !== 'failed' && (
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 mr-1.5 flex-shrink-0 text-green-400">
                         <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
                       </svg>
                     )}
-                    <span className={obj.completed ? 'line-through' : ''}>{obj.text}</span>
+                    {selectedQuest.status === 'failed' && (
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 mr-1.5 flex-shrink-0 text-red-500">
+                           <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" />
+                        </svg>
+                    )}
+                    {!obj.completed && selectedQuest.status === 'active' && (
+                        <span className="w-4 h-4 mr-1.5 flex-shrink-0 inline-flex items-center justify-center text-gray-400">-</span>
+                    )}
+                    <span className={`${obj.completed && selectedQuest.status !== 'failed' ? 'line-through' : ''} ${selectedQuest.status === 'failed' ? 'line-through text-red-400 opacity-70' : ''}`}>
+                        {obj.text}
+                    </span>
                   </li>
                 ))}
               </ul>

@@ -1,7 +1,6 @@
 
-
 import type { User as FirebaseUserType } from 'firebase/auth';
-import { HarmCategory, HarmBlockThreshold } from "@google/genai"; 
+import { HarmCategory, HarmBlockThreshold } from "@google/genai";
 import * as GameTemplates from './templates'; // Import all templates
 
 export enum GameScreen {
@@ -9,9 +8,9 @@ export enum GameScreen {
   GameSetup = 'GameSetup',
   Gameplay = 'Gameplay',
   ApiSettings = 'ApiSettings',
-  LoadGameSelection = 'LoadGameSelection', 
-  StorageSettings = 'StorageSettings', 
-  ImportExport = 'ImportExport', 
+  LoadGameSelection = 'LoadGameSelection',
+  StorageSettings = 'StorageSettings',
+  ImportExport = 'ImportExport',
 }
 
 export type FirebaseUser = FirebaseUserType;
@@ -25,27 +24,27 @@ export interface FirebaseUserConfig {
   storageBucket: string;
   messagingSenderId: string;
   appId: string;
-  measurementId?: string; 
+  measurementId?: string;
 }
 
 export interface StorageSettings {
   storageType: StorageType;
-  firebaseUserConfig: FirebaseUserConfig | null; 
+  firebaseUserConfig: FirebaseUserConfig | null;
 }
 
 export interface PlayerStats {
-  hp: number;
-  maxHp: number;
-  mana: number;
-  maxMana: number;
-  atk: number;
-  exp: number;
-  maxExp: number;
-  level: number;
-  realm: string; 
+  sinhLuc: number;
+  maxSinhLuc: number;
+  linhLuc: number;
+  maxLinhLuc: number;
+  sucTanCong: number;
+  kinhNghiem: number;
+  maxKinhNghiem: number;
+  realm: string; // e.g., "Phàm Nhân Nhất Trọng"
   currency: number;
   isInCombat: boolean;
   turn: number;
+  hieuUngBinhCanh: boolean; // Bottleneck effect
 }
 
 // Use the new InventoryItem union from templates.ts as the primary Item type
@@ -69,7 +68,7 @@ export interface QuestObjective {
 export interface Quest {
   id: string;
   title: string;
-  description: string; 
+  description: string;
   status: 'active' | 'completed' | 'failed';
   objectives: QuestObjective[];
 }
@@ -78,7 +77,7 @@ export interface Companion { // Companion can remain simpler or also be template
   id: string;
   name: string;
   description: string;
-  hp: number;
+  hp: number; // Companions might still use HP for simplicity unless they also get full cultivation
   maxHp: number;
   mana: number;
   maxMana: number;
@@ -107,7 +106,7 @@ export interface StartingItem {
 export interface StartingNPC {
   name: string;
   personality: string; // AI provides this
-  initialAffinity: number; 
+  initialAffinity: number;
   details: string; // AI provides this
 }
 
@@ -124,12 +123,13 @@ export interface StartingLocation { // New interface for starting locations
 }
 
 export interface WorldSettings {
+  saveGameName: string; // Added field for save game name
   theme: string;
   settingDescription: string;
   writingStyle: string;
   difficulty: 'Dễ' | 'Thường' | 'Khó';
   currencyName: string;
-  playerName: string; 
+  playerName: string;
   playerGender: 'Nam' | 'Nữ' | 'Khác';
   playerPersonality: string;
   playerBackstory: string;
@@ -137,11 +137,13 @@ export interface WorldSettings {
   playerStartingTraits: string;
   startingSkills: StartingSkill[];
   startingItems: StartingItem[];
-  startingNPCs: StartingNPC[];     
-  startingLore: StartingLore[];    
-  startingLocations: StartingLocation[]; // Added starting locations
-  nsfwMode?: boolean; 
-  originalStorySummary?: string; // Renamed from fanficMainPlot
+  startingNPCs: StartingNPC[];
+  startingLore: StartingLore[];
+  startingLocations: StartingLocation[];
+  nsfwMode?: boolean;
+  originalStorySummary?: string;
+  heThongCanhGioi: string; // e.g., "Phàm Nhân - Luyện Khí - Trúc Cơ"
+  canhGioiKhoiDau: string; // e.g., "Phàm Nhân Nhất Trọng"
 }
 
 export interface TurnHistoryEntry {
@@ -149,28 +151,47 @@ export interface TurnHistoryEntry {
   gameMessagesSnapshot: GameMessage[];  // Snapshot of messages *before* this turn's action was processed
 }
 
+export interface RealmBaseStatDefinition {
+  hpBase: number;         // Base HP at Nhất Trọng of this main realm tier
+  hpInc: number;          // HP increment per sub-level within this main realm tier
+  mpBase: number;         // Base MP at Nhất Trọng
+  mpInc: number;          // MP increment per sub-level
+  atkBase: number;        // Base ATK at Nhất Trọng
+  atkInc: number;         // ATK increment per sub-level
+  expBase: number;        // Max EXP at Nhất Trọng (to reach next sub-level)
+  expInc: number;         // Additional Max EXP per sub-level
+}
+
 export interface KnowledgeBase {
   playerStats: PlayerStats;
   inventory: Item[]; // Now uses the new rich Item type (InventoryItem union)
   playerSkills: Skill[]; // Now uses SkillTemplate
-  allQuests: Quest[]; 
+  allQuests: Quest[];
   discoveredNPCs: NPC[]; // Now uses NPCTemplate
   discoveredLocations: GameLocation[]; // Now uses LocationTemplate
   discoveredFactions: Faction[]; // New field for factions
-  realmProgressionList: string[];
+  realmProgressionList: string[]; // This might become deprecated or derived from worldConfig.heThongCanhGioi
+  currentRealmBaseStats: Record<string, RealmBaseStatDefinition>; // Dynamically generated BASE_STATS_MAP
   worldConfig: WorldSettings | null;
   companions: Companion[];
   worldLore: WorldLoreEntry[];
-  appVersion?: string; 
+  appVersion?: string;
   pageSummaries?: Record<number, string>;
   currentPageHistory?: number[];
   lastSummarizedTurn?: number;
   turnHistory?: TurnHistoryEntry[]; // For rollback functionality
+
+  // New fields for save system
+  autoSaveTurnCounter: number;      // Counter for auto-save interval (0 to AUTO_SAVE_INTERVAL_TURNS - 1)
+  currentAutoSaveSlotIndex: number; // Index of the next auto-save slot (0 to MAX_AUTO_SAVE_SLOTS - 1)
+  autoSaveSlotIds: (string | null)[]; // Stores the actual DB/Firestore IDs for each auto-save slot
+  manualSaveId: string | null;        // Stores the actual DB/Firestore ID for the world's manual save
+  manualSaveName: string | null;      // User-defined name for the manual save
 }
 
 export interface AiChoice {
   text: string;
-  actionTag?: string; 
+  actionTag?: string;
 }
 
 export interface GameMessage {
@@ -179,14 +200,14 @@ export interface GameMessage {
   content: string;
   timestamp: number;
   choices?: AiChoice[];
-  isPlayerInput?: boolean; 
+  isPlayerInput?: boolean;
   turnNumber: number;
 }
 
 export interface ParsedAiResponse {
   narration: string;
   choices: AiChoice[];
-  tags: string[]; 
+  tags: string[];
   systemMessage?: string;
 }
 
@@ -196,17 +217,17 @@ export interface SafetySetting {
 }
 
 export interface ApiConfig {
-  apiKeySource: 'system' | 'user'; 
-  userApiKey: string;             
+  apiKeySource: 'system' | 'user';
+  userApiKey: string;
   model: string;
-  safetySettings?: SafetySetting[]; 
+  safetySettings?: SafetySetting[];
 }
 
 export interface SaveGameData {
-  id?: string; 
-  name: string; 
-  timestamp: any; 
-  knowledgeBase: KnowledgeBase; 
+  id?: string; // Made optional for data being prepared for save, ID assigned by storage
+  name: string;
+  timestamp: any; // Can be Date for local, or serverTimestamp for Firestore, then Date on load
+  knowledgeBase: KnowledgeBase;
   gameMessages: GameMessage[];
   appVersion?: string;
 }
@@ -214,7 +235,7 @@ export interface SaveGameData {
 export interface SaveGameMeta {
     id: string;
     name: string;
-    timestamp: Date; 
+    timestamp: Date;
     size?: number; // Estimated size in bytes
 }
 
@@ -241,7 +262,7 @@ export interface GeneratedWorldElements {
   startingItems: StartingItem[];
   startingNPCs: StartingNPC[];
   startingLore: StartingLore[];
-  startingLocations?: StartingLocation[]; // Added starting locations
+  startingLocations?: StartingLocation[];
   playerName?: string;
   playerPersonality?: string;
   playerBackstory?: string;
@@ -252,4 +273,7 @@ export interface GeneratedWorldElements {
   worldWritingStyle?: string;
   currencyName?: string;
   originalStorySummary?: string;
+  heThongCanhGioi?: string;
+  canhGioiKhoiDau?: string;
+  saveGameName?: string; // Added here for AI generation if desired
 }

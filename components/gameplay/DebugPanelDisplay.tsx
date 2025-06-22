@@ -176,7 +176,7 @@ const DebugPanelDisplay: React.FC<DebugPanelDisplayProps> = ({
 
       <div className="p-3 overflow-y-auto flex-grow custom-scrollbar"> 
         <div className="mb-3 text-xs text-gray-400">
-          Player: C{kb.playerStats.level} ({kb.playerStats.realm}), Lượt: {kb.playerStats.turn}<br/>
+          Player: {kb.playerStats.realm}, Lượt: {kb.playerStats.turn}<br/>
           Trang: {currentPageDisplay}/{totalPages}, Lượt tóm tắt cuối: {kb.lastSummarizedTurn || 'Chưa có'}<br/>
           Lịch sử trang (bắt đầu từ lượt): {JSON.stringify(kb.currentPageHistory)}<br/>
           Tóm tắt có sẵn cho trang: {kb.pageSummaries ? Object.keys(kb.pageSummaries).join(', ') : 'Không có'}<br/>

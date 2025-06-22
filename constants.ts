@@ -1,29 +1,78 @@
 
-
-import { KnowledgeBase, PlayerStats, WorldSettings, SafetySetting, PlayerActionInputType, ResponseLength, ApiConfig, StartingSkill, StartingItem, StartingNPC, StartingLore, StorageType, FirebaseUserConfig, StorageSettings, GameMessage, Faction, StyleSettings, StartingLocation } from './types'; // Added StartingLocation
+import { KnowledgeBase, PlayerStats, WorldSettings, SafetySetting, PlayerActionInputType, ResponseLength, ApiConfig, StartingSkill, StartingItem, StartingNPC, StartingLore, StorageType, FirebaseUserConfig, StorageSettings, GameMessage, Faction, StyleSettings, StartingLocation, RealmBaseStatDefinition } from './types'; // Added StartingLocation, RealmBaseStatDefinition
 import { HarmCategory, HarmBlockThreshold } from "@google/genai";
-import { VIETNAMESE as AllTranslations } from './translations'; // Import from new location
-import { PROMPT_TEMPLATES as AllPrompts } from './prompts'; // Import from new location
+import { VIETNAMESE as AllTranslations } from './translations'; 
+import { PROMPT_FUNCTIONS as AllPrompts } from './prompts/index'; // Updated import path
 
 export const GAME_TITLE = "Role Play AI";
-export const APP_VERSION = "1.0.0";
+export const APP_VERSION = "1.1.0";
 export const TURNS_PER_PAGE = 20; // Number of turns before a new page is started
 export const MAX_TURN_HISTORY_LENGTH = 30; // Maximum number of turns to keep in history for rollback
 export const MAX_TOKENS_FANFIC = 800000; // Maximum tokens for fanfiction TXT file upload
 
+export const SUB_REALM_NAMES = ["Nhất Trọng", "Nhị Trọng", "Tam Trọng", "Tứ Trọng", "Ngũ Trọng", "Lục Trọng", "Thất Trọng", "Bát Trọng", "Cửu Trọng", "Đỉnh Phong"];
+
+// Save System Constants
+export const AUTO_SAVE_INTERVAL_TURNS = 5;
+export const MAX_AUTO_SAVE_SLOTS = 10;
+
+
+// New: Default tiered stats for dynamic assignment to realms based on RealmBaseStatDefinition
+const generateTieredStats = (): RealmBaseStatDefinition[] => {
+  const tiers: RealmBaseStatDefinition[] = [];
+
+  // Tier 0 (e.g., Phàm Nhân) - User's example
+  tiers.push({
+    hpBase: 100, hpInc: 20,
+    mpBase: 50, mpInc: 10,
+    atkBase: 10, atkInc: 2,
+    expBase: 100, expInc: 20,
+  });
+
+  // Tier 1 (e.g., Luyện Khí) - User's example
+  tiers.push({
+    hpBase: 1000, hpInc: 200,
+    mpBase: 500, mpInc: 100,
+    atkBase: 100, atkInc: 20,
+    expBase: 1000, expInc: 200,
+  });
+
+  // Growth factors for subsequent tiers
+  const baseMultiplier = 5.0; // Multiplier for Base stats (hpBase, mpBase, atkBase, expBase) - CHANGED
+  const incMultiplier = 2.0;  // Multiplier for Increment stats (hpInc, mpInc, atkInc, expInc) - CHANGED
+
+  for (let i = 2; i < 30; i++) {
+    const prevTier = tiers[i - 1];
+    tiers.push({
+      hpBase: Math.floor(prevTier.hpBase * baseMultiplier),
+      hpInc: Math.floor(prevTier.hpInc * incMultiplier),
+      mpBase: Math.floor(prevTier.mpBase * baseMultiplier),
+      mpInc: Math.floor(prevTier.mpInc * incMultiplier),
+      atkBase: Math.floor(prevTier.atkBase * baseMultiplier),
+      atkInc: Math.floor(prevTier.atkInc * incMultiplier),
+      expBase: Math.floor(prevTier.expBase * baseMultiplier),
+      expInc: Math.floor(prevTier.expInc * incMultiplier),
+    });
+  }
+  return tiers;
+};
+
+export const DEFAULT_TIERED_STATS: RealmBaseStatDefinition[] = generateTieredStats();
+
+
 export const DEFAULT_PLAYER_STATS: PlayerStats = {
-  hp: 100,
-  maxHp: 100,
-  mana: 50,
-  maxMana: 50,
-  atk: 10,
-  exp: 0,
-  maxExp: 100,
-  level: 1,
-  realm: "Phàm Nhân Cảnh",
+  sinhLuc: 100,
+  maxSinhLuc: 100,
+  linhLuc: 50,
+  maxLinhLuc: 50,
+  sucTanCong: 10,
+  kinhNghiem: 0,
+  maxKinhNghiem: 100, // Will be dynamically calculated
+  realm: "Phàm Nhân Nhất Trọng", // Updated to new format
   currency: 0,
   isInCombat: false,
   turn: 0,
+  hieuUngBinhCanh: false,
 };
 
 export const INITIAL_KNOWLEDGE_BASE: KnowledgeBase = {
@@ -34,7 +83,8 @@ export const INITIAL_KNOWLEDGE_BASE: KnowledgeBase = {
   discoveredNPCs: [],
   discoveredLocations: [],
   discoveredFactions: [],
-  realmProgressionList: ["Phàm Nhân Cảnh", "Luyện Khí Kỳ", "Trúc Cơ Kỳ", "Kim Đan Kỳ", "Nguyên Anh Kỳ", "Hóa Thần Kỳ"],
+  realmProgressionList: ["Phàm Nhân - Luyện Khí - Trúc Cơ - Kim Đan - Nguyên Anh - Hóa Thần"], // Example, will be set by worldConfig
+  currentRealmBaseStats: {}, // Initialize as empty, will be populated in App.tsx
   worldConfig: null,
   companions: [],
   worldLore: [],
@@ -42,14 +92,21 @@ export const INITIAL_KNOWLEDGE_BASE: KnowledgeBase = {
   currentPageHistory: [1],
   lastSummarizedTurn: 0,
   turnHistory: [], // Added for rollback
+  // New save system fields
+  autoSaveTurnCounter: 0,
+  currentAutoSaveSlotIndex: 0,
+  autoSaveSlotIds: Array(MAX_AUTO_SAVE_SLOTS).fill(null),
+  manualSaveId: null,
+  manualSaveName: null,
 };
 
 export const DEFAULT_WORLD_SETTINGS: WorldSettings = {
+    saveGameName: "", // Added default save game name
     theme: "",
     settingDescription: "",
     writingStyle: "",
     difficulty: "Thường",
-    currencyName: "",
+    currencyName: "Linh Thạch",
     playerName: "",
     playerGender: "Nam",
     playerPersonality: "",
@@ -60,9 +117,11 @@ export const DEFAULT_WORLD_SETTINGS: WorldSettings = {
     startingItems: [],
     startingNPCs: [],
     startingLore: [],
-    startingLocations: [], // Added starting locations
+    startingLocations: [],
     nsfwMode: false,
-    originalStorySummary: "", // Renamed
+    originalStorySummary: "",
+    heThongCanhGioi: "Phàm Nhân - Luyện Khí - Trúc Cơ - Kim Đan - Nguyên Anh - Hóa Thần - Luyện Hư - Hợp Thể - Đại Thừa - Độ Kiếp", // Default realm system
+    canhGioiKhoiDau: "Phàm Nhân Nhất Trọng", // Updated to new format
 };
 
 // API Settings Constants
@@ -154,5 +213,25 @@ export const DEFAULT_STYLE_SETTINGS: StyleSettings = {
 };
 
 // Re-export the translations and prompts
-export const VIETNAMESE = AllTranslations;
+export const VIETNAMESE = {
+    ...AllTranslations,
+    saveGameNameLabel: "Tên File Lưu Game",
+    saveGameNamePlaceholder: "Ví dụ: Cuộc phiêu lưu của [Tên Nhân Vật]",
+    saveGameNameRequiredError: "Vui lòng nhập tên cho file lưu game.",
+    exportWorldSettingsButton: "Xuất Thiết Lập Thế Giới",
+    importWorldSettingsButton: "Nhập Thiết Lập Thế Giới",
+    worldSettingsExportedSuccess: "Thiết lập thế giới đã được xuất thành công!",
+    errorExportingWorldSettings: "Lỗi khi xuất thiết lập thế giới.",
+    selectJsonFileForWorldSettings: "Chọn file .json chứa thiết lập thế giới:",
+    worldSettingsImportedSuccess: "Thiết lập thế giới đã được nhập thành công!",
+    errorImportingWorldSettings: "Lỗi khi nhập thiết lập thế giới. File có thể không hợp lệ.",
+    invalidWorldSettingsFile: "File thiết lập thế giới không hợp lệ hoặc bị lỗi.",
+    confirmImportWorldSettings: "Bạn có chắc muốn nhập thiết lập thế giới từ file? Các cài đặt hiện tại sẽ bị ghi đè.",
+    autoSaveInProgress: "Đang tự động lưu...",
+    autoSaveSuccess: (slotName: string) => `Game đã tự động lưu vào "${slotName}".`,
+    autoSaveError: (slotName: string) => `Lỗi khi tự động lưu vào "${slotName}".`,
+    manualSaveErrorNoName: "Không thể lưu, tên file lưu không được để trống.",
+};
+
+// Re-export with the original name PROMPT_TEMPLATES for compatibility
 export const PROMPT_TEMPLATES = AllPrompts;

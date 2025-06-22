@@ -92,9 +92,14 @@ const ImportExportScreen: React.FC<ImportExportScreenProps> = ({
       const blob = new Blob([jsonString], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
-      const safeName = gameData.name.replace(/[^a-z0-9_-\s]/gi, '').replace(/\s+/g, '-').toLowerCase();
-      const timestampStr = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
-      link.download = `daodoai-save-${safeName}-${timestampStr}.json`;
+      
+      // Use gameData.name for the filename, sanitized
+      let safeName = gameData.name.replace(/[^a-z0-9_-\s]/gi, '').replace(/\s+/g, '-').toLowerCase();
+      if (!safeName) { // Fallback if name is empty or results in empty after sanitization
+        safeName = 'daodoai-exported-save';
+      }
+      link.download = `${safeName}.json`; // New filename convention
+
       link.href = url;
       document.body.appendChild(link);
       link.click();
@@ -133,25 +138,27 @@ const ImportExportScreen: React.FC<ImportExportScreenProps> = ({
         typeof parsedData !== 'object' ||
         !parsedData.knowledgeBase ||
         !parsedData.gameMessages ||
-        !parsedData.name ||
-        !parsedData.timestamp // Original timestamp for reference, will be overwritten by service
+        !parsedData.name || // Ensure original name exists in JSON for potential reference
+        !parsedData.timestamp
       ) {
         throw new Error(VIETNAMESE.invalidJsonFile);
       }
       
-      // Prepare data for import service (id and new timestamp will be handled by service)
+      const jsonFilename = fileToImport.name;
+      // Get filename without extension for the save name
+      const saveNameFromFilename = jsonFilename.substring(0, jsonFilename.lastIndexOf('.')) || jsonFilename;
+
       const dataToImport: Omit<SaveGameData, 'id' | 'timestamp'> = {
-        name: parsedData.name, // Original name will be used by service (possibly prefixed)
+        name: saveNameFromFilename, // Use filename (without extension) as the base name for the save
         knowledgeBase: parsedData.knowledgeBase,
         gameMessages: parsedData.gameMessages,
         appVersion: parsedData.appVersion || APP_VERSION,
       };
 
-      await importGameData(dataToImport);
-      // No need for notify success here, App.tsx's handleImportGame will call notify
-      setFileToImport(null); // Clear selection
-      if(fileInputRef.current) fileInputRef.current.value = ""; // Reset file input
-      loadSaveSlots(); // Refresh save slots list
+      await importGameData(dataToImport); // Service will prefix this name
+      setFileToImport(null); 
+      if(fileInputRef.current) fileInputRef.current.value = ""; 
+      loadSaveSlots(); 
     } catch (e) {
       console.error("Error importing game data:", e);
       const errorMessage = e instanceof Error ? e.message : String(e);

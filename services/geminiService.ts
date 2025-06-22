@@ -1,4 +1,5 @@
 
+
 import { GoogleGenAI, GenerateContentResponse, HarmCategory, HarmBlockThreshold, CountTokensResponse } from "@google/genai";
 import { KnowledgeBase, ParsedAiResponse, AiChoice, WorldSettings, ApiConfig, SafetySetting, PlayerActionInputType, ResponseLength, StartingSkill, StartingItem, StartingNPC, StartingLore, GameMessage, GeneratedWorldElements, StartingLocation } from '../types'; // Added StartingLocation
 import { PROMPT_TEMPLATES, VIETNAMESE, API_SETTINGS_STORAGE_KEY, DEFAULT_MODEL_ID, HARM_CATEGORIES, DEFAULT_API_CONFIG, MAX_TOKENS_FANFIC } from '../constants';
@@ -13,7 +14,7 @@ export const getApiSettings = (): ApiConfig => {
   if (storedSettings) {
     try {
       const parsed = JSON.parse(storedSettings);
-      
+
       const validSafetySettings =
         parsed.safetySettings &&
         Array.isArray(parsed.safetySettings) &&
@@ -49,14 +50,14 @@ const getAiClient = (): GoogleGenAI => {
         throw new Error(VIETNAMESE.apiKeySystemUnavailable + " (GEMINI_API_KEY or API_KEY not found in environment)");
     }
     effectiveApiKey = systemApiKey;
-  } else { 
+  } else {
     if (!settings.userApiKey) {
       console.error("User API Key is selected but not configured. Please set it in API Settings.");
       throw new Error(VIETNAMESE.apiKeyMissing);
     }
     effectiveApiKey = settings.userApiKey;
   }
-  
+
   if (!ai || lastUsedApiKeySource !== settings.apiKeySource || (settings.apiKeySource === 'user' && lastUsedEffectiveApiKey !== effectiveApiKey) || (settings.apiKeySource === 'system' && lastUsedEffectiveApiKey !== effectiveApiKey)) {
     try {
       ai = new GoogleGenAI({ apiKey: effectiveApiKey });
@@ -77,7 +78,7 @@ const getAiClient = (): GoogleGenAI => {
 export const parseAiResponseText = (responseText: string): ParsedAiResponse => {
   let narration = responseText;
   const choices: AiChoice[] = [];
-  const gameStateTags: string[] = []; 
+  const gameStateTags: string[] = [];
   let systemMessage: string | undefined;
 
   const allTagsRegex = /\[(.*?)\]/g;
@@ -89,7 +90,7 @@ export const parseAiResponseText = (responseText: string): ParsedAiResponse => {
 
   for (const tagInfo of foundRawTags) {
     const { fullTag, content } = tagInfo;
-    
+
     if (narration.includes(fullTag)) {
         narration = narration.replace(fullTag, '');
     }
@@ -99,7 +100,7 @@ export const parseAiResponseText = (responseText: string): ParsedAiResponse => {
     if (upperContent.startsWith('CHOICE:')) {
       try {
         const choiceText = content.substring('CHOICE:'.length).trim().replace(/^"|"$/g, '');
-        if (choiceText) { 
+        if (choiceText) {
             choices.push({ text: choiceText });
         }
       } catch (e) {
@@ -142,7 +143,7 @@ export const parseGeneratedWorldDetails = (responseText: string): GeneratedWorld
   const GWD_ITEM = 'GENERATED_ITEM:';
   const GWD_NPC = 'GENERATED_NPC:';
   const GWD_LORE = 'GENERATED_LORE:';
-  const GWD_LOCATION = 'GENERATED_LOCATION:'; 
+  const GWD_LOCATION = 'GENERATED_LOCATION:';
   const GWD_PLAYER_NAME = 'GENERATED_PLAYER_NAME:';
   const GWD_PLAYER_PERSONALITY = 'GENERATED_PLAYER_PERSONALITY:';
   const GWD_PLAYER_BACKSTORY = 'GENERATED_PLAYER_BACKSTORY:';
@@ -153,13 +154,15 @@ export const parseGeneratedWorldDetails = (responseText: string): GeneratedWorld
   const GWD_WORLD_WRITING_STYLE = 'GENERATED_WORLD_WRITING_STYLE:';
   const GWD_CURRENCY_NAME = 'GENERATED_CURRENCY_NAME:';
   const GWD_ORIGINAL_STORY_SUMMARY = 'GENERATED_ORIGINAL_STORY_SUMMARY:';
+  const GWD_HE_THONG_CANH_GIOI = 'GENERATED_HE_THONG_CANH_GIOI:';
+  const GWD_CANH_GIOI_KHOI_DAU = 'GENERATED_CANH_GIOI_KHOI_DAU:';
 
   const generated: GeneratedWorldElements = {
     startingSkills: [],
     startingItems: [],
     startingNPCs: [],
     startingLore: [],
-    startingLocations: [], 
+    startingLocations: [],
   };
 
   const originalStorySummaryRegex = /\[GENERATED_ORIGINAL_STORY_SUMMARY:\s*text\s*=\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')\s*\]/is;
@@ -184,53 +187,91 @@ export const parseGeneratedWorldDetails = (responseText: string): GeneratedWorld
     if (line.startsWith(`[${GWD_SKILL}`)) {
         const content = line.substring(line.indexOf(GWD_SKILL) + GWD_SKILL.length, line.lastIndexOf(']')).trim();
         const params = parseTagParams(content);
-        if (params.name && params.description) {
-            generated.startingSkills.push({ name: params.name, description: params.description });
+        const name = params.name;
+        if (!name) {
+            console.warn("Skipping GENERATED_SKILL due to missing 'name' parameter:", line);
+            return;
         }
+        const description = params.description || "Kỹ năng do AI tạo, chưa có mô tả.";
+        generated.startingSkills.push({ name, description });
+
     } else if (line.startsWith(`[${GWD_ITEM}`)) {
         const content = line.substring(line.indexOf(GWD_ITEM) + GWD_ITEM.length, line.lastIndexOf(']')).trim();
         const params = parseTagParams(content);
-        const quantity = parseInt(params.quantity || "1", 10);
-        if (params.name && params.description && params.type && !isNaN(quantity)) {
-            generated.startingItems.push({
-                name: params.name,
-                description: params.description,
-                quantity: quantity > 0 ? quantity : 1,
-                type: params.type
-            });
+        const name = params.name;
+        if (!name) {
+            console.warn("Skipping GENERATED_ITEM due to missing 'name' parameter:", line);
+            return;
         }
+        const description = params.description || "Vật phẩm do AI tạo, chưa có mô tả.";
+        const itemType = params.type || "Linh tinh"; // Default type
+        const quantity = parseInt(params.quantity || "1", 10);
+        
+        if (!isNaN(quantity)) {
+            generated.startingItems.push({
+                name,
+                description,
+                quantity: quantity > 0 ? quantity : 1,
+                type: itemType
+            });
+        } else {
+            console.warn("Skipping GENERATED_ITEM due to invalid 'quantity':", line);
+        }
+
     } else if (line.startsWith(`[${GWD_NPC}`)) {
         const content = line.substring(line.indexOf(GWD_NPC) + GWD_NPC.length, line.lastIndexOf(']')).trim();
         const params = parseTagParams(content);
-        const initialAffinity = parseInt(params.initialAffinity || "0", 10);
-        if (params.name && params.personality && params.details && !isNaN(initialAffinity)) {
-            generated.startingNPCs.push({
-                name: params.name,
-                personality: params.personality,
-                initialAffinity: Math.max(-100, Math.min(100, initialAffinity)),
-                details: params.details
-            });
+        const name = params.name;
+        if (!name) {
+            console.warn("Skipping GENERATED_NPC due to missing 'name' parameter:", line);
+            return;
         }
+        const personality = params.personality || "Bí ẩn";
+        const details = params.details || "Không có thông tin chi tiết.";
+        const initialAffinity = parseInt(params.initialAffinity || "0", 10);
+
+        if (!isNaN(initialAffinity)) {
+            generated.startingNPCs.push({
+                name,
+                personality,
+                initialAffinity: Math.max(-100, Math.min(100, initialAffinity)),
+                details
+            });
+        } else {
+             console.warn("Skipping GENERATED_NPC due to invalid 'initialAffinity':", line);
+        }
+
     } else if (line.startsWith(`[${GWD_LORE}`)) {
         const content = line.substring(line.indexOf(GWD_LORE) + GWD_LORE.length, line.lastIndexOf(']')).trim();
         const params = parseTagParams(content);
-        if (params.title && params.content) {
-            generated.startingLore.push({ title: params.title, content: params.content });
+        const title = params.title;
+        if (!title) {
+            console.warn("Skipping GENERATED_LORE due to missing 'title' parameter:", line);
+            return;
         }
-    } else if (line.startsWith(`[${GWD_LOCATION}`)) { 
+        const loreContent = params.content || "Nội dung tri thức chưa được cung cấp.";
+        generated.startingLore.push({ title, content: loreContent });
+
+    } else if (line.startsWith(`[${GWD_LOCATION}`)) {
         const content = line.substring(line.indexOf(GWD_LOCATION) + GWD_LOCATION.length, line.lastIndexOf(']')).trim();
         const params = parseTagParams(content);
-        if (params.name && params.description) {
-            if (!generated.startingLocations) { 
-                generated.startingLocations = [];
-            }
-            generated.startingLocations.push({
-                name: params.name,
-                description: params.description,
-                isSafeZone: params.isSafeZone?.toLowerCase() === 'true', 
-                regionId: params.regionId || undefined
-            });
+        const name = params.name;
+        if(!name){
+            console.warn("Skipping GENERATED_LOCATION due to missing 'name' parameter:", line);
+            return;
         }
+        const description = params.description || "Địa điểm chưa có mô tả.";
+        
+        if (!generated.startingLocations) {
+            generated.startingLocations = [];
+        }
+        generated.startingLocations.push({
+            name,
+            description,
+            isSafeZone: params.isSafeZone?.toLowerCase() === 'true',
+            regionId: params.regionId || undefined
+        });
+
     } else if (line.startsWith(`[${GWD_PLAYER_NAME}`)) {
         const content = line.substring(line.indexOf(GWD_PLAYER_NAME) + GWD_PLAYER_NAME.length, line.lastIndexOf(']')).trim();
         const params = parseTagParams(content);
@@ -267,6 +308,14 @@ export const parseGeneratedWorldDetails = (responseText: string): GeneratedWorld
         const content = line.substring(line.indexOf(GWD_CURRENCY_NAME) + GWD_CURRENCY_NAME.length, line.lastIndexOf(']')).trim();
         const params = parseTagParams(content);
         if (params.name) generated.currencyName = params.name;
+    } else if (line.startsWith(`[${GWD_HE_THONG_CANH_GIOI}`)) {
+        const content = line.substring(line.indexOf(GWD_HE_THONG_CANH_GIOI) + GWD_HE_THONG_CANH_GIOI.length, line.lastIndexOf(']')).trim();
+        const params = parseTagParams(content);
+        if (params.text) generated.heThongCanhGioi = params.text;
+    } else if (line.startsWith(`[${GWD_CANH_GIOI_KHOI_DAU}`)) {
+        const content = line.substring(line.indexOf(GWD_CANH_GIOI_KHOI_DAU) + GWD_CANH_GIOI_KHOI_DAU.length, line.lastIndexOf(']')).trim();
+        const params = parseTagParams(content);
+        if (params.text) generated.canhGioiKhoiDau = params.text;
     }
   });
 
@@ -286,9 +335,9 @@ export const callGeminiAPI = async (
     const errorMessage = clientError instanceof Error ? clientError.message : String(clientError);
     throw new Error(`Lỗi API Client: ${errorMessage}`);
   }
-  
+
   const { model: configuredModel, safetySettings } = getApiSettings();
-  
+
   if (onPromptConstructed) {
     onPromptConstructed(prompt);
   }
@@ -366,10 +415,10 @@ export const generateNextTurn = async (
 
 export const generateWorldDetailsFromStory = async (
   storyIdea: string,
-  isNsfwIdea: boolean, 
+  isNsfwIdea: boolean,
   onPromptConstructed?: (prompt: string) => void
 ): Promise<{response: GeneratedWorldElements, rawText: string}> => {
-  const prompt = PROMPT_TEMPLATES.generateWorldDetails(storyIdea, isNsfwIdea); 
+  const prompt = PROMPT_TEMPLATES.generateWorldDetails(storyIdea, isNsfwIdea);
   const rawText = await callGeminiAPI(prompt, onPromptConstructed);
   const parsedResponse = parseGeneratedWorldDetails(rawText);
   return {response: parsedResponse, rawText};
@@ -379,10 +428,10 @@ export const generateFanfictionWorldDetails = async (
   sourceMaterial: string,
   isSourceContent: boolean,
   playerInputDescription?: string,
-  isNsfwIdea?: boolean, 
+  isNsfwIdea?: boolean,
   onPromptConstructed?: (prompt: string) => void
 ): Promise<{response: GeneratedWorldElements, rawText: string}> => {
-  const prompt = PROMPT_TEMPLATES.generateFanfictionWorldDetails(sourceMaterial, isSourceContent, playerInputDescription, isNsfwIdea); 
+  const prompt = PROMPT_TEMPLATES.generateFanfictionWorldDetails(sourceMaterial, isSourceContent, playerInputDescription, isNsfwIdea);
   const rawText = await callGeminiAPI(prompt, onPromptConstructed);
   const parsedResponse = parseGeneratedWorldDetails(rawText);
   return {response: parsedResponse, rawText};
@@ -392,7 +441,8 @@ export const summarizeTurnHistory = async (
   messagesToSummarize: GameMessage[],
   worldTheme: string,
   playerName: string,
-  onPromptConstructed?: (constructedPrompt: string) => void
+  onPromptConstructed?: (constructedPrompt: string) => void,
+  onResponseReceived?: (rawText: string) => void
 ): Promise<{ rawText: string, processedSummary: string }> => {
   if (!messagesToSummarize || messagesToSummarize.length === 0) {
     const noContentMsg = VIETNAMESE.noContentToSummarize || "Không có diễn biến nào đáng kể trong trang này.";
@@ -402,6 +452,9 @@ export const summarizeTurnHistory = async (
 
   try {
     const rawText = await callGeminiAPI(prompt, onPromptConstructed);
+    if (onResponseReceived) {
+        onResponseReceived(rawText);
+    }
     const processedSummary = rawText.replace(/```json\s*|\s*```/g, '').trim();
     return { rawText, processedSummary };
   } catch (error) {
