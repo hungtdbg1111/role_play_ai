@@ -29,4 +29,3 @@ Hãy viết một đoạn văn (khoảng 100-200 từ) tóm tắt lại những 
 Mục tiêu là tạo ra một bản tóm tắt giúp người chơi nhanh chóng nắm bắt lại những gì đã xảy ra trước đó để tiếp tục cuộc phiêu lưu một cách mạch lạc.
 Tránh đi sâu vào các chi tiết nhỏ hoặc các thay đổi chỉ số thông thường. Chỉ viết đoạn văn tóm tắt, không thêm lời dẫn hay tag nào khác.
 `;
-};

@@ -58,4 +58,3 @@ ${isNsfwIdea
 - Hãy sáng tạo và đảm bảo các yếu tố này phù hợp với mô tả ý tưởng.
 - Không thêm bất kỳ lời dẫn, giải thích, hay văn bản nào khác ngoài các tag được yêu cầu. Đảm bảo phản hồi chỉ chứa các tag.
 `;
-};
