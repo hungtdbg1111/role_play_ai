@@ -9,7 +9,9 @@ import {
   AVAILABLE_MODELS, 
   HARM_CATEGORIES,      
   HARM_BLOCK_THRESHOLDS, 
-  DEFAULT_API_CONFIG
+  DEFAULT_API_CONFIG,
+  AVAILABLE_IMAGE_MODELS, // Added
+  DEFAULT_IMAGE_MODEL_ID // Added
 } from '../constants';
 import { getApiSettings } from '../services/geminiService'; 
 import { HarmCategory, HarmBlockThreshold } from '@google/genai'; 
@@ -23,7 +25,9 @@ const ApiSettingsScreen: React.FC<ApiSettingsScreenProps> = ({ setCurrentScreen,
   const [currentApiKeySource, setCurrentApiKeySource] = useState<'system' | 'user'>(DEFAULT_API_CONFIG.apiKeySource);
   const [userApiKeyInput, setUserApiKeyInput] = useState<string>('');
   const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_API_CONFIG.model);
+  const [selectedImageModel, setSelectedImageModel] = useState<string>(DEFAULT_API_CONFIG.imageModel); // New state for image model
   const [safetySettings, setSafetySettings] = useState<SafetySetting[]>(DEFAULT_API_CONFIG.safetySettings);
+  const [autoGenerateNpcAvatars, setAutoGenerateNpcAvatars] = useState<boolean>(DEFAULT_API_CONFIG.autoGenerateNpcAvatars);
   const [error, setError] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<string>('');
 
@@ -32,7 +36,9 @@ const ApiSettingsScreen: React.FC<ApiSettingsScreenProps> = ({ setCurrentScreen,
     setCurrentApiKeySource(loadedSettings.apiKeySource);
     setUserApiKeyInput(loadedSettings.userApiKey);
     setSelectedModel(loadedSettings.model);
+    setSelectedImageModel(loadedSettings.imageModel || DEFAULT_IMAGE_MODEL_ID); // Load image model
     setSafetySettings(loadedSettings.safetySettings);
+    setAutoGenerateNpcAvatars(loadedSettings.autoGenerateNpcAvatars);
   }, []);
 
   const handleUserApiKeyChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -43,6 +49,11 @@ const ApiSettingsScreen: React.FC<ApiSettingsScreenProps> = ({ setCurrentScreen,
 
   const handleModelChange = (e: ChangeEvent<HTMLSelectElement>) => {
     setSelectedModel(e.target.value);
+    if (successMessage) setSuccessMessage('');
+  };
+
+  const handleImageModelChange = (e: ChangeEvent<HTMLSelectElement>) => { // New handler
+    setSelectedImageModel(e.target.value);
     if (successMessage) setSuccessMessage('');
   };
 
@@ -62,6 +73,11 @@ const ApiSettingsScreen: React.FC<ApiSettingsScreenProps> = ({ setCurrentScreen,
     if (successMessage) setSuccessMessage('');
   };
 
+  const handleAutoGenerateNpcAvatarsChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setAutoGenerateNpcAvatars(e.target.checked);
+    if (successMessage) setSuccessMessage('');
+  };
+
   const handleSaveSettings = () => {
     if (currentApiKeySource === 'user' && !userApiKeyInput.trim()) {
       setError(VIETNAMESE.apiKeyRequiredError);
@@ -73,12 +89,11 @@ const ApiSettingsScreen: React.FC<ApiSettingsScreenProps> = ({ setCurrentScreen,
       apiKeySource: currentApiKeySource,
       userApiKey: currentApiKeySource === 'user' ? userApiKeyInput.trim() : '', 
       model: selectedModel,
-      safetySettings: safetySettings 
+      imageModel: selectedImageModel, // Save image model
+      safetySettings: safetySettings,
+      autoGenerateNpcAvatars: autoGenerateNpcAvatars,
     };
     localStorage.setItem(API_SETTINGS_STORAGE_KEY, JSON.stringify(settingsToSave));
-    
-    // Clear last used API key cache in geminiService to force re-initialization with new settings
-    // This is implicitly handled by getAiClient logic which re-initializes if source or key changes.
     
     setSuccessMessage(VIETNAMESE.settingsSavedMessage);
     onSettingsSaved(); 
@@ -175,6 +190,43 @@ const ApiSettingsScreen: React.FC<ApiSettingsScreenProps> = ({ setCurrentScreen,
           </div>
 
           <div>
+            <label htmlFor="geminiImageModel" className="block text-sm font-medium text-gray-300 mb-1">
+              {VIETNAMESE.geminiImageModelLabel}
+            </label>
+            <select
+              id="geminiImageModel"
+              value={selectedImageModel}
+              onChange={handleImageModelChange}
+              className="w-full p-3 bg-gray-700 border border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-gray-100 transition-colors duration-150"
+            >
+              {AVAILABLE_IMAGE_MODELS.map(model => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="pt-4 border-t border-gray-700">
+            <label htmlFor="autoGenerateNpcAvatars" className="flex items-center cursor-pointer">
+              <div className="relative">
+                <input
+                  type="checkbox"
+                  id="autoGenerateNpcAvatars"
+                  className="sr-only" // Hide default checkbox
+                  checked={autoGenerateNpcAvatars}
+                  onChange={handleAutoGenerateNpcAvatarsChange}
+                />
+                <div className={`block w-10 h-6 rounded-full transition-colors ${autoGenerateNpcAvatars ? 'bg-indigo-600' : 'bg-gray-600'}`}></div>
+                <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${autoGenerateNpcAvatars ? 'transform translate-x-full' : ''}`}></div>
+              </div>
+              <span className="ml-3 text-sm font-medium text-gray-300">{VIETNAMESE.autoGenerateNpcAvatarsLabel}</span>
+            </label>
+            <p className="text-xs text-gray-400 mt-1 ml-10">{VIETNAMESE.autoGenerateNpcAvatarsInfo}</p>
+          </div>
+
+
+          <div>
             <h3 className="text-xl font-semibold text-gray-200 mb-3 pt-4 border-t border-gray-700 mt-6">
               {VIETNAMESE.safetySettingsLabel}
             </h3>
@@ -226,6 +278,9 @@ const ApiSettingsScreen: React.FC<ApiSettingsScreenProps> = ({ setCurrentScreen,
        <p className="mt-8 text-xs text-gray-500 text-center max-w-md px-2">
         {apiInfoText}
       </p>
+      {autoGenerateNpcAvatars && (
+        <p className="mt-2 text-xs text-yellow-400 text-center max-w-md px-2">{VIETNAMESE.cloudinaryInfo}</p>
+      )}
     </div>
   );
 };

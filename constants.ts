@@ -1,20 +1,62 @@
 
-import { KnowledgeBase, PlayerStats, WorldSettings, SafetySetting, PlayerActionInputType, ResponseLength, ApiConfig, StartingSkill, StartingItem, StartingNPC, StartingLore, StorageType, FirebaseUserConfig, StorageSettings, GameMessage, Faction, StyleSettings, StartingLocation, RealmBaseStatDefinition } from './types'; // Added StartingLocation, RealmBaseStatDefinition
+
+import { KnowledgeBase, PlayerStats, WorldSettings, SafetySetting, PlayerActionInputType, ResponseLength, ApiConfig, StartingSkill, StartingItem, StartingNPC, StartingLore, StorageType, FirebaseUserConfig, StorageSettings, GameMessage, Faction, StyleSettings, StartingLocation, RealmBaseStatDefinition, StartingFaction, EquipmentSlotId, EquipmentSlotConfig, GenreType } from './types';
 import { HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { VIETNAMESE as AllTranslations } from './translations'; 
-import { PROMPT_FUNCTIONS as AllPrompts } from './prompts/index'; // Updated import path
+import { PROMPT_FUNCTIONS as AllPrompts } from './prompts/index';
+import * as GameTemplates from './templates';
+
 
 export const GAME_TITLE = "Role Play AI";
-export const APP_VERSION = "1.1.0";
-export const TURNS_PER_PAGE = 20; // Number of turns before a new page is started
-export const MAX_TURN_HISTORY_LENGTH = 30; // Maximum number of turns to keep in history for rollback
-export const MAX_TOKENS_FANFIC = 800000; // Maximum tokens for fanfiction TXT file upload
+export const APP_VERSION = "1.2.3"; // Version bump for Cloudinary API Key uploads
+export const TURNS_PER_PAGE = 20; 
+export const MAX_TURN_HISTORY_LENGTH = 30; 
+export const MAX_TOKENS_FANFIC = 800000; 
 
 export const SUB_REALM_NAMES = ["Nhất Trọng", "Nhị Trọng", "Tam Trọng", "Tứ Trọng", "Ngũ Trọng", "Lục Trọng", "Thất Trọng", "Bát Trọng", "Cửu Trọng", "Đỉnh Phong"];
 
 // Save System Constants
 export const AUTO_SAVE_INTERVAL_TURNS = 5;
 export const MAX_AUTO_SAVE_SLOTS = 10;
+
+export const CUSTOM_GENRE_VALUE = "Khác (Tự định nghĩa)";
+
+// Define with 'as const' to break circular dependency for GenreType derivation
+const _AVAILABLE_GENRES_LITERAL = [
+  "Tu Tiên (Mặc định)",
+  "Võ Hiệp",
+  "Tiên Hiệp",
+  "Huyền Huyễn",
+  "Cung Đấu",
+  "Linh Dị",
+  "Khoa Huyễn",
+  "Tây Phương Fantasy",
+  "Ngôn Tình",
+  "Đô Thị",
+  "Mạt Thế",
+  "Võng Du",
+  "Thể Thao",
+  "Kinh Dị",
+  CUSTOM_GENRE_VALUE 
+] as const;
+
+// Export for use in types.ts and elsewhere
+export const AVAILABLE_GENRES: typeof _AVAILABLE_GENRES_LITERAL = _AVAILABLE_GENRES_LITERAL;
+
+
+export const DEFAULT_MORTAL_STATS: Pick<PlayerStats, 'baseMaxSinhLuc' | 'baseMaxLinhLuc' | 'baseSucTanCong' | 'baseMaxKinhNghiem' | 'realm' | 'linhLuc' | 'maxLinhLuc' | 'kinhNghiem' | 'maxKinhNghiem' | 'hieuUngBinhCanh' | 'activeStatusEffects'> = {
+  baseMaxSinhLuc: 100,
+  baseMaxLinhLuc: 0, // Mortals might not have mana/spirit energy
+  baseSucTanCong: 10,
+  baseMaxKinhNghiem: 100, // General experience or skill points
+  realm: "Người Thường", // Default realm for mortals
+  linhLuc: 0,
+  maxLinhLuc: 0,
+  kinhNghiem: 0,
+  maxKinhNghiem: 100,
+  hieuUngBinhCanh: false,
+  activeStatusEffects: [],
+};
 
 
 // New: Default tiered stats for dynamic assignment to realms based on RealmBaseStatDefinition
@@ -37,9 +79,8 @@ const generateTieredStats = (): RealmBaseStatDefinition[] => {
     expBase: 1000, expInc: 200,
   });
 
-  // Growth factors for subsequent tiers
-  const baseMultiplier = 5.0; // Multiplier for Base stats (hpBase, mpBase, atkBase, expBase) - CHANGED
-  const incMultiplier = 2.0;  // Multiplier for Increment stats (hpInc, mpInc, atkInc, expInc) - CHANGED
+  const baseMultiplier = 5.0; 
+  const incMultiplier = 2.0;  
 
   for (let i = 2; i < 30; i++) {
     const prevTier = tiers[i - 1];
@@ -61,47 +102,65 @@ export const DEFAULT_TIERED_STATS: RealmBaseStatDefinition[] = generateTieredSta
 
 
 export const DEFAULT_PLAYER_STATS: PlayerStats = {
+  baseMaxSinhLuc: 100,
+  baseMaxLinhLuc: 50,
+  baseSucTanCong: 10,
+  baseMaxKinhNghiem: 100,
+
   sinhLuc: 100,
   maxSinhLuc: 100,
   linhLuc: 50,
   maxLinhLuc: 50,
   sucTanCong: 10,
   kinhNghiem: 0,
-  maxKinhNghiem: 100, // Will be dynamically calculated
-  realm: "Phàm Nhân Nhất Trọng", // Updated to new format
+  maxKinhNghiem: 100, 
+  realm: "Phàm Nhân Nhất Trọng", 
   currency: 0,
   isInCombat: false,
   turn: 0,
   hieuUngBinhCanh: false,
+  activeStatusEffects: [],
 };
 
 export const INITIAL_KNOWLEDGE_BASE: KnowledgeBase = {
   playerStats: { ...DEFAULT_PLAYER_STATS },
   inventory: [],
+  equippedItems: {
+    mainWeapon: null,
+    offHandWeapon: null,
+    head: null,
+    body: null,
+    hands: null,
+    legs: null,
+    artifact: null,
+    pet: null,
+    accessory1: null,
+    accessory2: null,
+  },
   playerSkills: [],
   allQuests: [],
   discoveredNPCs: [],
   discoveredLocations: [],
   discoveredFactions: [],
-  realmProgressionList: ["Phàm Nhân - Luyện Khí - Trúc Cơ - Kim Đan - Nguyên Anh - Hóa Thần"], // Example, will be set by worldConfig
-  currentRealmBaseStats: {}, // Initialize as empty, will be populated in App.tsx
+  realmProgressionList: [], // Populated by worldConfig or defaults
+  currentRealmBaseStats: {}, 
   worldConfig: null,
   companions: [],
   worldLore: [],
   pageSummaries: {},
   currentPageHistory: [1],
   lastSummarizedTurn: 0,
-  turnHistory: [], // Added for rollback
-  // New save system fields
+  turnHistory: [], 
   autoSaveTurnCounter: 0,
   currentAutoSaveSlotIndex: 0,
   autoSaveSlotIds: Array(MAX_AUTO_SAVE_SLOTS).fill(null),
   manualSaveId: null,
   manualSaveName: null,
+  playerAvatarData: undefined, // Base64 data or Cloudinary URL post-upload
 };
 
 export const DEFAULT_WORLD_SETTINGS: WorldSettings = {
-    saveGameName: "", // Added default save game name
+    saveGameName: "", 
     theme: "",
     settingDescription: "",
     writingStyle: "",
@@ -118,24 +177,36 @@ export const DEFAULT_WORLD_SETTINGS: WorldSettings = {
     startingNPCs: [],
     startingLore: [],
     startingLocations: [],
+    startingFactions: [], 
     nsfwMode: false,
     originalStorySummary: "",
-    heThongCanhGioi: "Phàm Nhân - Luyện Khí - Trúc Cơ - Kim Đan - Nguyên Anh - Hóa Thần - Luyện Hư - Hợp Thể - Đại Thừa - Độ Kiếp", // Default realm system
-    canhGioiKhoiDau: "Phàm Nhân Nhất Trọng", // Updated to new format
+    // Genre and Cultivation
+    genre: AVAILABLE_GENRES[0], // Default to "Tu Tiên (Mặc định)"
+    customGenreName: "", // Default empty
+    isCultivationEnabled: true, // Default to enabled
+    heThongCanhGioi: "Phàm Nhân - Luyện Khí - Trúc Cơ - Kim Đan - Nguyên Anh - Hóa Thần - Luyện Hư - Hợp Thể - Đại Thừa - Độ Kiếp", 
+    canhGioiKhoiDau: "Phàm Nhân Nhất Trọng", 
+    playerAvatarUrl: undefined, 
 };
 
 // API Settings Constants
-export const API_SETTINGS_STORAGE_KEY = 'daoDoAiApiSettings_v2';
+export const API_SETTINGS_STORAGE_KEY = 'daoDoAiApiSettings_v3'; // Incremented version
 export const AVAILABLE_MODELS = [
   { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Recommended)' },
-  { id: 'gemini-2.5-flash-preview-04-17', name: 'gemini-2.5-flash-preview-04-17' },
-  { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
-  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash' },
+  { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash (Legacy)' }, // Kept for backward compatibility if needed
 ];
-export const DEFAULT_MODEL_ID = AVAILABLE_MODELS[0].id;
-export const DEFAULT_API_KEY_SOURCE: 'system' | 'user' = 'system';
+export const DEFAULT_MODEL_ID = AVAILABLE_MODELS[0].id; // Updated default to recommended model
 
-export const GEMINI_MODEL_TEXT = DEFAULT_MODEL_ID;
+export const AVAILABLE_IMAGE_MODELS = [
+  { id: 'gemini-2.0-flash-preview-image-generation', name: 'Gemini 2.0 Flash Image Gen (Alternative)' },
+  { id: 'imagen-3.0-generate-002', name: 'Imagen 3.0 (Recommended for Avatars)' }
+];
+export const DEFAULT_IMAGE_MODEL_ID = AVAILABLE_IMAGE_MODELS[0].id;
+
+export const DEFAULT_API_KEY_SOURCE: 'system' | 'user' = 'system';
+export const DEFAULT_AUTO_GENERATE_NPC_AVATARS = false; 
+
+export const GEMINI_MODEL_TEXT = DEFAULT_MODEL_ID; 
 
 export const HARM_CATEGORIES = [
   { id: HarmCategory.HARM_CATEGORY_HARASSMENT, label: "Quấy Rối" },
@@ -153,14 +224,16 @@ export const HARM_BLOCK_THRESHOLDS = [
 
 export const DEFAULT_SAFETY_SETTINGS: SafetySetting[] = HARM_CATEGORIES.map(category => ({
   category: category.id,
-  threshold: HarmBlockThreshold.BLOCK_NONE,
+  threshold: HarmBlockThreshold.BLOCK_NONE, 
 }));
 
 export const DEFAULT_API_CONFIG: ApiConfig = {
   apiKeySource: DEFAULT_API_KEY_SOURCE,
   userApiKey: '',
   model: DEFAULT_MODEL_ID,
+  imageModel: DEFAULT_IMAGE_MODEL_ID, // Added image model
   safetySettings: DEFAULT_SAFETY_SETTINGS,
+  autoGenerateNpcAvatars: DEFAULT_AUTO_GENERATE_NPC_AVATARS, 
 };
 
 // Storage Settings Constants
@@ -188,33 +261,79 @@ export const AVAILABLE_FONT_SIZES = ['12px', '13px', '14px', '15px', '16px', '17
 export const DEFAULT_STYLE_SETTINGS: StyleSettings = {
   narration: {
     fontFamily: 'Inter, sans-serif',
-    fontSize: '16px', // Tailwind 'text-base' is often 16px
-    textColor: '#F3F4F6', // Tailwind text-gray-100
-    backgroundColor: '#374151', // Tailwind bg-gray-700
+    fontSize: '16px', 
+    textColor: '#F3F4F6', 
+    backgroundColor: '#374151', 
   },
   playerAction: {
     fontFamily: 'Inter, sans-serif',
     fontSize: '16px',
-    textColor: '#FFFFFF', // Tailwind text-white
-    backgroundColor: '#4F46E5', // Tailwind bg-indigo-600
+    textColor: '#FFFFFF', 
+    backgroundColor: '#4F46E5', 
   },
   choiceButton: {
     fontFamily: 'Inter, sans-serif',
-    fontSize: '14px', // Tailwind 'text-sm'
-    textColor: '#D1D5DB', // Tailwind text-gray-300 for ghost variant
-    backgroundColor: 'transparent', // Consistent with Button variant="ghost"
+    fontSize: '14px', 
+    textColor: '#D1D5DB', 
+    backgroundColor: 'transparent', 
   },
   keywordHighlight: {
-    fontFamily: undefined, // Inherits by default
-    fontSize: undefined,   // Inherits by default
-    textColor: '#FACC15',  // Tailwind yellow-400
-    backgroundColor: undefined, // Transparent by default
+    fontFamily: undefined, 
+    fontSize: undefined,   
+    textColor: '#FACC15',  
+    backgroundColor: undefined, 
   },
 };
+
+// Equipment Slot Configuration
+export const EQUIPMENT_SLOTS_CONFIG: EquipmentSlotConfig[] = [
+  { id: 'mainWeapon', labelKey: 'slotMainWeapon', accepts: [GameTemplates.EquipmentType.VU_KHI] },
+  { id: 'offHandWeapon', labelKey: 'slotOffHandWeapon', accepts: [GameTemplates.EquipmentType.VU_KHI, GameTemplates.EquipmentType.PHAP_BAO] }, 
+  { id: 'head', labelKey: 'slotHead', accepts: [GameTemplates.EquipmentType.GIAP_DAU] },
+  { id: 'body', labelKey: 'slotBody', accepts: [GameTemplates.EquipmentType.GIAP_THAN] },
+  { id: 'hands', labelKey: 'slotHands', accepts: [GameTemplates.EquipmentType.GIAP_TAY] },
+  { id: 'legs', labelKey: 'slotLegs', accepts: [GameTemplates.EquipmentType.GIAP_CHAN] },
+  { id: 'artifact', labelKey: 'slotArtifact', accepts: [GameTemplates.EquipmentType.PHAP_BAO] },
+  { id: 'pet', labelKey: 'slotPet', accepts: [GameTemplates.EquipmentType.THU_CUNG] },
+  { id: 'accessory1', labelKey: 'slotAccessory1', accepts: [GameTemplates.EquipmentType.TRANG_SUC] },
+  { id: 'accessory2', labelKey: 'slotAccessory2', accepts: [GameTemplates.EquipmentType.TRANG_SUC] },
+];
+
+// Avatar Constants
+export const FEMALE_AVATAR_BASE_URL = "https://res.cloudinary.com/drsm5jv45/image/upload/v1750815171/";
+export const MAX_FEMALE_AVATAR_INDEX = 192;
+export const MALE_AVATAR_PLACEHOLDER_URL = "https://via.placeholder.com/150/777777/FFFFFF?Text=Nam";
+
+// Cloudinary Constants
+export const CLOUDINARY_CLOUD_NAME = 'dropcqgvd'; // Provided by user
+// **QUAN TRỌNG:** Điền API Key và API Secret của bạn vào đây. 
+// **CẢNH BÁO BẢO MẬT:** Không bao giờ đưa API Secret lên Git repository công khai.
+// Chỉ nên giữ ở local hoặc sử dụng biến môi trường cho production.
+export const CLOUDINARY_API_KEY = '981233443712136'; // <<< THAY BẰNG API KEY CỦA BẠN
+export const CLOUDINARY_API_SECRET = 'lSQR0j2BdJKPSPxf89J1kUwWYDk'; // <<< THAY BẰNG API SECRET CỦA BẠN
+
+// Tên thư mục mới cho Cloudinary uploads
+export const CLOUDINARY_FOLDER_PLAYER = 'ai_rpg_avatars_player';
+export const CLOUDINARY_FOLDER_NPC_MALE = 'ai_rpg_avatars_npc_male';
+export const CLOUDINARY_FOLDER_NPC_WOMEN = 'ai_rpg_avatars_npc_women';
+
+
+// Upload presets không còn được sử dụng trực tiếp bởi `cloudinaryService` nếu dùng signed uploads
+// export const CLOUDINARY_UPLOAD_PRESET_NPC = 'ai_rpg_avatars_npc'; 
+// export const CLOUDINARY_UPLOAD_PRESET_PLAYER = 'ai_rpg_avatars_player';
+
 
 // Re-export the translations and prompts
 export const VIETNAMESE = {
     ...AllTranslations,
+    // Genre and Cultivation System
+    genreLabel: "Thể Loại Thế Giới",
+    customGenreNameLabel: "Nhập Tên Thể Loại Tự Định Nghĩa",
+    customGenreNamePlaceholder: "Ví dụ: Cyberpunk Kiếm Hiệp, Horror Tu Chân...",
+    enableCultivationSystemLabel: "Bật Hệ Thống Tu Luyện/Sức Mạnh Đặc Thù",
+    cultivationSystemDisabledNote: "Khi tắt, nhân vật sẽ là người thường, không có cảnh giới/linh lực/kinh nghiệm tu luyện. Các chỉ số sẽ là cơ bản.",
+    mortalRealmName: "Người Thường",
+    noCultivationSystem: "Không có hệ thống tu luyện",
     saveGameNameLabel: "Tên File Lưu Game",
     saveGameNamePlaceholder: "Ví dụ: Cuộc phiêu lưu của [Tên Nhân Vật]",
     saveGameNameRequiredError: "Vui lòng nhập tên cho file lưu game.",
@@ -231,7 +350,96 @@ export const VIETNAMESE = {
     autoSaveSuccess: (slotName: string) => `Game đã tự động lưu vào "${slotName}".`,
     autoSaveError: (slotName: string) => `Lỗi khi tự động lưu vào "${slotName}".`,
     manualSaveErrorNoName: "Không thể lưu, tên file lưu không được để trống.",
+
+    startingFactionsSection: "Phe Phái Khởi Đầu",
+    addStartingFaction: "+ Thêm Phe Phái",
+    removeFaction: "Xóa Phe Phái",
+    factionNameLabel: "Tên Phe Phái",
+    factionDescriptionLabel: "Mô Tả Phe Phái",
+    factionAlignmentLabel: "Chính/Tà",
+    factionReputationLabel: "Uy Tín Ban Đầu (-100 đến 100)",
+
+    equipmentScreenTitle: "Trang Bị Nhân Vật",
+    equipmentButton: "Trang Bị",
+    equipmentButtonShort: "Tr.Bị",
+    equippedItemsSection: "Trang Bị Đang Dùng",
+    equipmentInventorySection: "Trang Bị Trong Túi",
+    playerStatsSection: "Chỉ Số Nhân Vật",
+    dropHereToEquip: "Thả vào đây để trang bị",
+    emptySlot: "Ô Trống",
+    slotMainWeapon: "Vũ Khí Chính",
+    slotOffHandWeapon: "Vũ Khí Phụ/Khiên",
+    slotHead: "Giáp Đầu",
+    slotBody: "Giáp Thân",
+    slotHands: "Giáp Tay",
+    slotLegs: "Giáp Chân",
+    slotArtifact: "Pháp Bảo",
+    slotPet: "Thú Cưng",
+    slotAccessory1: "Trang Sức 1",
+    slotAccessory2: "Trang Sức 2",
+    dragToEquip: "Kéo thả để trang bị",
+    itemEquipped: (itemName: string, slotName: string) => `${itemName} đã được trang bị vào ${slotName}.`,
+    itemUnequipped: (itemName: string, slotName: string) => `${itemName} đã được gỡ khỏi ${slotName}.`,
+    cannotEquipItem: (itemName: string, slotName: string, reason?: string) => `Không thể trang bị ${itemName} vào ${slotName}.${reason ? ` Lý do: ${reason}` : ''}`,
+    invalidItemTypeForSlot: "Loại vật phẩm không phù hợp với ô này.",
+    baseStatsLabel: "Chỉ số Cơ Bản",
+    equipmentBonusLabel: "Cộng từ Trang Bị",
+    totalStatsLabel: "Tổng Chỉ số",
+    statDisplayFormat: (base: number, bonus: number, total: number) => `${total} (Cơ bản: ${base}, Trang bị: ${bonus > 0 ? '+' : ''}${bonus})`,
+
+    craftingScreenTitle: "Luyện Chế Vật Phẩm",
+    craftingButton: "Luyện Chế",
+    craftingButtonShort: "L.Chế",
+    desiredItemSection: "Vật Phẩm Muốn Luyện Chế",
+    desiredItemCategoryLabel: "Loại Vật Phẩm Mong Muốn",
+    desiredItemRequirementsLabel: "Yêu Cầu/Mô Tả Vật Phẩm",
+    desiredItemRequirementsPlaceholder: "Ví dụ: Một thanh kiếm có khả năng gây bỏng, một bình đan dược hồi phục nhanh linh lực...",
+    craftingMaterialsSection: "Nguyên Liệu Luyện Chế",
+    addMaterialSlotButton: "+ Thêm Ô Nguyên Liệu",
+    removeMaterialButton: "Xóa",
+    dropMaterialHere: "Thả nguyên liệu vào đây",
+    materialInventorySection: "Nguyên Liệu Trong Túi",
+    craftItemButton: "Luyện Chế",
+    craftingInProgress: "Đang luyện chế...",
+    craftingSuccess: (itemName: string) => `Luyện chế thành công! Nhận được: ${itemName}.`,
+    craftingFailure: "Luyện chế thất bại. Vật phẩm tạo ra không như ý.",
+    materialsConsumed: (materialNames: string) => `Đã tiêu hao: ${materialNames}.`,
+    notEnoughMaterials: "Không đủ nguyên liệu để luyện chế.",
+    noMaterialsForCrafting: "Vui lòng chọn ít nhất một nguyên liệu để luyện chế.",
+    errorCraftingItem: "Lỗi khi luyện chế vật phẩm.",
+    selectItemCategory: "Chọn loại vật phẩm...",
+    viewSentPromptButton: "Xem Prompt Đã Gửi (Tạo Thế Giới)",
+    sentPromptModalTitle: "Prompt Đã Gửi Cho AI (Tạo Thế Giới)",
+    statusEffectsSection: "Hiệu Ứng Hiện Tại",
+    statusEffectApplied: (effectName: string) => `Bạn nhận được hiệu ứng: ${effectName}.`,
+    statusEffectRemoved: (effectName: string) => `Hiệu ứng ${effectName} đã kết thúc.`,
+    statusEffectDuration: (turns: number) => `(còn ${turns} lượt)`,
+    statusEffectPermanent: "(Vĩnh viễn/Đặc biệt)",
+    statusEffectTypeBuff: "Có Lợi",
+    statusEffectTypeDebuff: "Bất Lợi",
+    statusEffectTypeNeutral: "Trung Tính",
+    npcGenderLabel: "Giới Tính NPC",
+    npcRealmLabel: "Cảnh Giới NPC (Tùy chọn)",
+    playerAvatarSectionTitle: "Ảnh Đại Diện Nhân Vật Chính",
+    randomAvatarButtonLabel: "Chọn Ảnh Đại Diện Ngẫu Nhiên (Nữ)",
+    uploadAvatarButtonLabel: "Tải Lên Ảnh Đại Diện",
+    avatarPreviewLabel: "Xem trước:",
+    npcAvatarLabel: "Ảnh đại diện NPC",
+    changeAvatarButtonLabel: "Đổi Ảnh Đại Diện",
+    removeUploadedAvatarButtonLabel: "Xóa Ảnh Đại Diện Hiện Tại",
+    playerAvatarLabel: "Ảnh đại diện",
+    aiAvatarPromptLabel: "Mô tả ảnh đại diện (AI)",
+    aiAvatarPromptPlaceholder: "Ví dụ: một nữ hiệp tóc đen, mắt phượng, mặc áo giáp bạc...",
+    generateAiAvatarButtonLabel: "Tạo Ảnh Đại Diện Bằng AI",
+    generatingAiAvatarMessage: "Đang tạo ảnh đại diện bằng AI...",
+    errorGeneratingAiAvatar: "Lỗi khi tạo ảnh đại diện bằng AI:",
+    aiAvatarPromptRequiredError: "Vui lòng nhập mô tả cho ảnh đại diện để AI tạo.",
+    autoGenerateNpcAvatarsLabel: "Tự động tạo ảnh NPC bằng AI (dùng Gemini & Cloudinary)",
+    autoGenerateNpcAvatarsInfo: "Khi bật, hệ thống sẽ cố gắng tạo ảnh đại diện cho NPC mới dựa trên mô tả của họ và lưu trữ trên Cloudinary. Nếu tắt, ảnh NPC sẽ được chọn ngẫu nhiên (nếu có) hoặc dùng placeholder.",
+    cloudinaryInfo: "Để sử dụng tính năng lưu trữ ảnh trên Cloudinary với API Key, bạn cần điền Cloudinary Cloud Name, API Key và API Secret vào file constants.ts. CẢNH BÁO: Việc lưu API Secret ở client rất nguy hiểm, chỉ dùng cho phát triển.",
+    geminiImageModelLabel: "Chọn Model Tạo Ảnh (Cho Avatar)", // New translation
 };
 
 // Re-export with the original name PROMPT_TEMPLATES for compatibility
 export const PROMPT_TEMPLATES = AllPrompts;
+export const ALL_FACTION_ALIGNMENTS = Object.values(GameTemplates.FactionAlignment);

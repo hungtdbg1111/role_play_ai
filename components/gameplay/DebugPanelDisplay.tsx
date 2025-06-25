@@ -9,7 +9,10 @@ interface DebugPanelDisplayProps {
   sentPromptsLog: string[];
   rawAiResponsesLog: string[];
   latestPromptTokenCount: number | null | string;
-  summarizationResponsesLog: string[]; // New prop for summary responses
+  summarizationResponsesLog: string[];
+  sentCraftingPromptsLog: string[]; 
+  receivedCraftingResponsesLog: string[];
+  sentNpcAvatarPromptsLog: string[]; // New prop
   currentPageDisplay: number;
   totalPages: number;
   isAutoPlaying: boolean;
@@ -28,6 +31,9 @@ const DebugPanelDisplay: React.FC<DebugPanelDisplayProps> = ({
     rawAiResponsesLog,
     latestPromptTokenCount,
     summarizationResponsesLog,
+    sentCraftingPromptsLog, 
+    receivedCraftingResponsesLog, 
+    sentNpcAvatarPromptsLog, // Destructure new prop
     currentPageDisplay,
     totalPages,
     isAutoPlaying,
@@ -233,7 +239,7 @@ const DebugPanelDisplay: React.FC<DebugPanelDisplayProps> = ({
           )}
         </div>
         
-        <div>
+        <div className="mb-4">
           <h5 className="text-md font-semibold text-purple-300 mb-1">Nhật Ký Phản Hồi Tóm Tắt Từ AI ({summarizationResponsesLog.length} gần nhất)</h5>
           {summarizationResponsesLog.length === 0 ? (
             <p className="text-xs italic text-gray-500">Chưa có phản hồi tóm tắt nào từ AI.</p>
@@ -246,6 +252,69 @@ const DebugPanelDisplay: React.FC<DebugPanelDisplayProps> = ({
                   </summary>
                   <pre className="p-1.5 bg-gray-850 text-purple-100 whitespace-pre-wrap break-all text-[10px] leading-relaxed max-h-80 overflow-y-auto custom-scrollbar">
                     {responseEntry}
+                  </pre>
+                </details>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Crafting Prompts Log */}
+        <div className="mb-4">
+          <h5 className="text-md font-semibold text-orange-300 mb-1">Nhật Ký Prompt Luyện Chế ({sentCraftingPromptsLog.length} gần nhất)</h5>
+          {sentCraftingPromptsLog.length === 0 ? (
+            <p className="text-xs italic text-gray-500">Chưa có prompt luyện chế nào được gửi.</p>
+          ) : (
+            <div className="space-y-1 max-h-40 overflow-y-auto custom-scrollbar text-xs">
+              {sentCraftingPromptsLog.map((promptEntry, index) => (
+                <details key={`craft-sent-${index}`} className="bg-gray-800 rounded group">
+                  <summary className="p-1.5 text-orange-200 cursor-pointer text-[11px] group-open:font-semibold">
+                    Prompt Luyện Chế #{sentCraftingPromptsLog.length - index} (Nhấn để xem)
+                  </summary>
+                  <pre className="p-1.5 bg-gray-850 text-orange-100 whitespace-pre-wrap break-all text-[10px] leading-relaxed max-h-80 overflow-y-auto custom-scrollbar">
+                    {promptEntry}
+                  </pre>
+                </details>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Crafting Responses Log */}
+        <div className="mb-4">
+          <h5 className="text-md font-semibold text-teal-300 mb-1">Nhật Ký Phản Hồi Luyện Chế Từ AI ({receivedCraftingResponsesLog.length} gần nhất)</h5>
+          {receivedCraftingResponsesLog.length === 0 ? (
+            <p className="text-xs italic text-gray-500">Chưa có phản hồi luyện chế nào từ AI.</p>
+          ) : (
+            <div className="space-y-1 max-h-40 overflow-y-auto custom-scrollbar text-xs">
+              {receivedCraftingResponsesLog.map((responseEntry, index) => (
+                 <details key={`craft-raw-${index}`} className="bg-gray-800 rounded group">
+                  <summary className="p-1.5 text-teal-200 cursor-pointer text-[11px] group-open:font-semibold">
+                    Phản hồi Luyện Chế #{receivedCraftingResponsesLog.length - index} (Nhấn để xem)
+                  </summary>
+                  <pre className="p-1.5 bg-gray-850 text-teal-100 whitespace-pre-wrap break-all text-[10px] leading-relaxed max-h-80 overflow-y-auto custom-scrollbar">
+                    {responseEntry}
+                  </pre>
+                </details>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* NPC Avatar Prompts Log */}
+        <div>
+          <h5 className="text-md font-semibold text-pink-300 mb-1">Nhật Ký Prompt Tạo Ảnh NPC ({sentNpcAvatarPromptsLog.length} gần nhất)</h5>
+          {sentNpcAvatarPromptsLog.length === 0 ? (
+            <p className="text-xs italic text-gray-500">Chưa có prompt tạo ảnh NPC nào được ghi lại.</p>
+          ) : (
+            <div className="space-y-1 max-h-40 overflow-y-auto custom-scrollbar text-xs">
+              {sentNpcAvatarPromptsLog.map((promptEntry, index) => (
+                <details key={`npc-avatar-prompt-${index}`} className="bg-gray-800 rounded group">
+                  <summary className="p-1.5 text-pink-200 cursor-pointer text-[11px] group-open:font-semibold">
+                    Prompt Ảnh NPC #{sentNpcAvatarPromptsLog.length - index} (Nhấn để xem)
+                  </summary>
+                  <pre className="p-1.5 bg-gray-850 text-pink-100 whitespace-pre-wrap break-all text-[10px] leading-relaxed max-h-80 overflow-y-auto custom-scrollbar">
+                    {promptEntry}
                   </pre>
                 </details>
               ))}

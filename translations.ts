@@ -131,7 +131,7 @@ export const VIETNAMESE = {
   itemNameLabel: "Tên Vật Phẩm",
   itemDescriptionLabel: "Mô Tả Vật Phẩm",
   itemQuantityLabel: "Số Lượng",
-  itemTypeLabel: "Loại Vật Phẩm (ví dụ: Đan dược, Pháp bảo, Linh thảo, Phù lục)",
+  itemTypeLabel: "Loại Vật Phẩm",
   startingNPCsSection: "NPC Khởi Đầu",
   addStartingNPC: "+ Thêm NPC",
   removeNPC: "Xóa NPC",
@@ -277,22 +277,43 @@ export const VIETNAMESE = {
   noContentToSummarize: "Không có nội dung để tóm tắt cho trang này.",
 
   // Cultivation System Specific
-  realmSystemLabel: "Hệ Thống Cảnh Giới (Phân cách bằng dấu '-')",
-  realmSystemPlaceholder: "Ví dụ: Phàm Nhân - Luyện Khí - Trúc Cơ - Kim Đan...",
-  startingRealmLabel: "Cảnh Giới Khởi Đầu",
-  startingRealmPlaceholder: "Ví dụ: Phàm Nhân Nhất Trọng",
+  realmSystemLabel: "Hệ Thống Cảnh Giới/Cấp Độ (Phân cách bằng dấu '-')",
+  realmSystemPlaceholder: "Ví dụ: Phàm Nhân - Luyện Khí - Trúc Cơ...",
+  startingRealmLabel: "Cảnh Giới/Cấp Độ Khởi Đầu",
+  startingRealmPlaceholder: "Ví dụ: Phàm Nhân Nhất Trọng / Tân Binh Cấp 1",
   sinhLucLabel: "Sinh Lực",
-  linhLucLabel: "Linh Lực",
+  linhLucLabel: "Linh Lực/Nội Lực/Năng Lượng", // Generic term
   sucTanCongLabel: "Sức Tấn Công",
   kinhNghiemLabel: "Kinh Nghiệm",
-  realmLabel: "Cảnh Giới",
+  realmLabel: "Cảnh Giới/Cấp Độ",
   bottleneckEffectLabel: "Bình Cảnh!",
-  bottleneckNotification: "Bạn đã đạt đến đỉnh phong của cảnh giới hiện tại và gặp phải bình cảnh. Cần cơ duyên hoặc ngoại lực để đột phá!",
+  bottleneckNotification: "Bạn đã đạt đến đỉnh phong của cảnh giới/cấp độ hiện tại và gặp phải bình cảnh. Cần cơ duyên hoặc ngoại lực để đột phá!",
   expPercentageGainTooltip: "AI sẽ trả về kinh nghiệm dưới dạng % của mức tối đa hiện tại.",
   breakthroughSuccessMessage: "Đột phá thành công!",
 
-  // Added for save game name at setup
-  saveGameNameLabel: "Tên File Lưu Game",
-  saveGameNamePlaceholder: "Ví dụ: Cuộc phiêu lưu của [Tên Nhân Vật]",
-  saveGameNameRequiredError: "Vui lòng nhập tên cho file lưu game.",
+  // Genre and Cultivation System
+  // genreLabel: "Thể Loại Thế Giới", // Already exists
+  // enableCultivationSystemLabel: "Bật Hệ Thống Tu Luyện/Sức Mạnh Đặc Thù", // Already exists
+  // cultivationSystemDisabledNote: "Khi tắt, nhân vật sẽ là người thường, không có cảnh giới/linh lực/kinh nghiệm tu luyện. Các chỉ số sẽ là cơ bản.", // Already exists
+  // mortalRealmName: "Người Thường", // Already exists
+  // noCultivationSystem: "Không có hệ thống tu luyện", // Already exists
+
+  // saveGameNameLabel: "Tên File Lưu Game", // Already exists
+  // saveGameNamePlaceholder: "Ví dụ: Cuộc phiêu lưu của [Tên Nhân Vật]", // Already exists
+  // saveGameNameRequiredError: "Vui lòng nhập tên cho file lưu game.", // Already exists
+  itemCategory_Equipment: "Trang Bị",
+  itemCategory_Potion: "Đan Dược/Thuốc",
+  itemCategory_Material: "Nguyên Liệu",
+  itemCategory_QuestItem: "Vật Phẩm Nhiệm Vụ",
+  itemCategory_Miscellaneous: "Linh Tinh",
+
+  // Status Effects
+  statusEffectsSection: "Hiệu Ứng Hiện Tại",
+  statusEffectApplied: (effectName: string) => `Bạn nhận được hiệu ứng: ${effectName}.`,
+  statusEffectRemoved: (effectName: string) => `Hiệu ứng ${effectName} đã kết thúc.`,
+  statusEffectDuration: (turns: number) => `(còn ${turns} lượt)`,
+  statusEffectPermanent: "(Vĩnh viễn/Đặc biệt)",
+  statusEffectTypeBuff: "Có Lợi",
+  statusEffectTypeDebuff: "Bất Lợi",
+  statusEffectTypeNeutral: "Trung Tính",
 };

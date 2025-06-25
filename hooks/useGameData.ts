@@ -2,7 +2,7 @@
 import { useState, useCallback } from 'react';
 import { KnowledgeBase, GameMessage } from '../types';
 import { INITIAL_KNOWLEDGE_BASE } from '../constants';
-import { calculateTotalPages as calculateTotalPagesUtil, getMessagesForPage as getMessagesForPageUtil } from '../utils/gameLogicUtils';
+import { calculateTotalPages, getMessagesForPage } from '../utils/gameLogicUtils';
 
 
 export const useGameData = () => {
@@ -18,10 +18,10 @@ export const useGameData = () => {
   const [currentPageDisplay, setCurrentPageDisplay] = useState<number>(1);
   const [messageIdBeingEdited, setMessageIdBeingEdited] = useState<string | null>(null);
 
-  const totalPages = calculateTotalPagesUtil(knowledgeBase);
+  const totalPages = calculateTotalPages(knowledgeBase);
   
-  const getMessagesForPage = useCallback((pageNumber: number) => {
-    return getMessagesForPageUtil(pageNumber, knowledgeBase, gameMessages);
+  const getMessagesForPageCallback = useCallback((pageNumber: number) => {
+    return getMessagesForPage(pageNumber, knowledgeBase, gameMessages);
   }, [knowledgeBase, gameMessages]);
 
   const addMessageAndUpdateState = useCallback((
@@ -64,7 +64,7 @@ export const useGameData = () => {
     totalPages,
     messageIdBeingEdited,
     setMessageIdBeingEdited,
-    getMessagesForPage,
+    getMessagesForPage: getMessagesForPageCallback,
     addMessageAndUpdateState,
     resetGameData
   };

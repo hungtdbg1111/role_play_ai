@@ -1,15 +1,16 @@
 
 import React from 'react';
-import { Item, Skill, Quest, NPC, GameLocation, WorldLoreEntry, Companion } from '../../types';
+// Ensure Faction is imported if not already via a chain that includes types.ts
+import { Item, Skill, Quest, NPC, GameLocation, WorldLoreEntry, Companion, Faction } from '../../types';
 
 interface KeywordSpanProps {
   keyword: string;
-  entityType: 'item' | 'skill' | 'quest' | 'npc' | 'location' | 'lore' | 'companion';
-  entity: Item | Skill | Quest | NPC | GameLocation | WorldLoreEntry | Companion;
+  entityType: 'item' | 'skill' | 'quest' | 'npc' | 'location' | 'lore' | 'companion' | 'faction'; // Added faction
+  entity: Item | Skill | Quest | NPC | GameLocation | WorldLoreEntry | Companion | Faction; // Added faction
   onClick: (
     event: React.MouseEvent<HTMLSpanElement>, 
-    entity: Item | Skill | Quest | NPC | GameLocation | WorldLoreEntry | Companion, 
-    entityType: 'item' | 'skill' | 'quest' | 'npc' | 'location' | 'lore' | 'companion'
+    entity: Item | Skill | Quest | NPC | GameLocation | WorldLoreEntry | Companion | Faction, // Added faction
+    entityType: 'item' | 'skill' | 'quest' | 'npc' | 'location' | 'lore' | 'companion' | 'faction' // Added faction
   ) => void;
   style?: React.CSSProperties; // Added to accept dynamic styles
 }

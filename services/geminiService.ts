@@ -1,14 +1,17 @@
 
 
 import { GoogleGenAI, GenerateContentResponse, HarmCategory, HarmBlockThreshold, CountTokensResponse } from "@google/genai";
-import { KnowledgeBase, ParsedAiResponse, AiChoice, WorldSettings, ApiConfig, SafetySetting, PlayerActionInputType, ResponseLength, StartingSkill, StartingItem, StartingNPC, StartingLore, GameMessage, GeneratedWorldElements, StartingLocation } from '../types'; // Added StartingLocation
-import { PROMPT_TEMPLATES, VIETNAMESE, API_SETTINGS_STORAGE_KEY, DEFAULT_MODEL_ID, HARM_CATEGORIES, DEFAULT_API_CONFIG, MAX_TOKENS_FANFIC } from '../constants';
+import { KnowledgeBase, ParsedAiResponse, AiChoice, WorldSettings, ApiConfig, SafetySetting, PlayerActionInputType, ResponseLength, StartingSkill, StartingItem, StartingNPC, StartingLore, GameMessage, GeneratedWorldElements, StartingLocation, StartingFaction, PlayerStats, Item as ItemType, GenreType } from '../types'; 
+import { PROMPT_TEMPLATES, VIETNAMESE, API_SETTINGS_STORAGE_KEY, DEFAULT_MODEL_ID, HARM_CATEGORIES, DEFAULT_API_CONFIG, MAX_TOKENS_FANFIC, ALL_FACTION_ALIGNMENTS, AVAILABLE_GENRES, CUSTOM_GENRE_VALUE, AVAILABLE_MODELS, AVAILABLE_IMAGE_MODELS, DEFAULT_IMAGE_MODEL_ID } from '../constants';
+import * as GameTemplates from '../templates';
+import { generateImageWithImagen3 } from './ImageGenerator'; 
+import { generateImageWithGemini2Flash } from './imagegengemini2.0';
 
 let ai: GoogleGenAI | null = null;
 let lastUsedEffectiveApiKey: string | null = null;
 let lastUsedApiKeySource: 'system' | 'user' | null = null;
+let lastUsedModelForClient: string | null = null;
 
-// Helper to get API settings from localStorage
 export const getApiSettings = (): ApiConfig => {
   const storedSettings = localStorage.getItem(API_SETTINGS_STORAGE_KEY);
   if (storedSettings) {
@@ -24,18 +27,24 @@ export const getApiSettings = (): ApiConfig => {
           typeof setting.threshold === 'string' &&
           HARM_CATEGORIES.some(cat => cat.id === setting.category)
         );
+      
+      const modelExists = AVAILABLE_MODELS.some(m => m.id === parsed.model);
+      const imageModelExists = AVAILABLE_IMAGE_MODELS.some(m => m.id === parsed.imageModel);
+
 
       return {
         apiKeySource: parsed.apiKeySource || DEFAULT_API_CONFIG.apiKeySource,
         userApiKey: parsed.userApiKey || '',
-        model: parsed.model || DEFAULT_API_CONFIG.model,
+        model: modelExists ? parsed.model : DEFAULT_API_CONFIG.model,
+        imageModel: imageModelExists ? parsed.imageModel : DEFAULT_API_CONFIG.imageModel,
         safetySettings: validSafetySettings ? parsed.safetySettings : DEFAULT_API_CONFIG.safetySettings,
+        autoGenerateNpcAvatars: parsed.autoGenerateNpcAvatars === undefined ? DEFAULT_API_CONFIG.autoGenerateNpcAvatars : parsed.autoGenerateNpcAvatars,
       };
     } catch (e) {
       console.error("Failed to parse API settings from localStorage", e);
     }
   }
-  return { ...DEFAULT_API_CONFIG }; // Return a copy of default config
+  return { ...DEFAULT_API_CONFIG }; 
 };
 
 const getAiClient = (): GoogleGenAI => {
@@ -43,11 +52,11 @@ const getAiClient = (): GoogleGenAI => {
   let effectiveApiKey: string;
 
   if (settings.apiKeySource === 'system') {
-    const systemApiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+    const systemApiKey = process.env.API_KEY; 
 
     if (typeof systemApiKey !== 'string' || systemApiKey.trim() === '') {
-        console.error("System API Key is selected, but neither process.env.GEMINI_API_KEY nor process.env.API_KEY is available or empty.");
-        throw new Error(VIETNAMESE.apiKeySystemUnavailable + " (GEMINI_API_KEY or API_KEY not found in environment)");
+        console.error("System API Key is selected, but process.env.API_KEY is not available or empty.");
+        throw new Error(VIETNAMESE.apiKeySystemUnavailable + " (API_KEY not found in environment)");
     }
     effectiveApiKey = systemApiKey;
   } else {
@@ -58,15 +67,16 @@ const getAiClient = (): GoogleGenAI => {
     effectiveApiKey = settings.userApiKey;
   }
 
-  if (!ai || lastUsedApiKeySource !== settings.apiKeySource || (settings.apiKeySource === 'user' && lastUsedEffectiveApiKey !== effectiveApiKey) || (settings.apiKeySource === 'system' && lastUsedEffectiveApiKey !== effectiveApiKey)) {
+  if (!ai || lastUsedApiKeySource !== settings.apiKeySource || lastUsedEffectiveApiKey !== effectiveApiKey || lastUsedModelForClient !== settings.model) {
     try {
       ai = new GoogleGenAI({ apiKey: effectiveApiKey });
       lastUsedEffectiveApiKey = effectiveApiKey;
       lastUsedApiKeySource = settings.apiKeySource;
+      lastUsedModelForClient = settings.model; // Store last used model to re-init if model changes
     } catch (initError) {
         console.error("Failed to initialize GoogleGenAI client:", initError);
         if (settings.apiKeySource === 'system') {
-            throw new Error(`${VIETNAMESE.apiKeySystemUnavailable} Details: ${initError instanceof Error ? initError.message : String(initError)} (Using system key: ${process.env.GEMINI_API_KEY ? 'GEMINI_API_KEY' : 'API_KEY'})`);
+            throw new Error(`${VIETNAMESE.apiKeySystemUnavailable} Details: ${initError instanceof Error ? initError.message : String(initError)} (Using system key: API_KEY)`);
         } else {
             throw new Error(`Lỗi khởi tạo API Key người dùng: ${initError instanceof Error ? initError.message : String(initError)}`);
         }
@@ -81,43 +91,104 @@ export const parseAiResponseText = (responseText: string): ParsedAiResponse => {
   const gameStateTags: string[] = [];
   let systemMessage: string | undefined;
 
+  // STEP 0.A: Pre-filter lines that are ONLY backticks
+  narration = narration
+    .split('\n')
+    .filter(line => !/^\s*`+\s*$/.test(line))
+    .join('\n');
+
+  // STEP 0.B: Pre-filter lines that are ONLY asterisks
+  narration = narration
+    .split('\n')
+    .filter(line => !/^\s*\*+\s*$/.test(line)) // Remove lines like "****", " *** "
+    .join('\n');
+
+  // STEP 0.C: Pre-filter lines that are ONLY hyphens (Markdown HR)
+  narration = narration
+    .split('\n')
+    .filter(line => !/^\s*-{3,}\s*$/.test(line)) // Remove lines like "---", " --- ", "----"
+    .join('\n');
+
+  // STEP 1: Extract and remove CHOICE lines (primarily for choices on their own lines)
+  const lines = narration.split('\n');
+  const remainingLinesForNarration: string[] = [];
+
+  for (const line of lines) {
+    let currentLineForChoiceParsing = line.trim();
+    let choiceContent: string | null = null;
+
+    const wrapperMatch = currentLineForChoiceParsing.match(/^(?:\s*(`{1,3}|\*{2,})\s*)(.*?)(\s*\1\s*)$/);
+    if (wrapperMatch && wrapperMatch[2] && wrapperMatch[2].toUpperCase().includes("[CHOICE:")) {
+        currentLineForChoiceParsing = wrapperMatch[2].trim(); 
+    }
+    
+    const choiceTagMatch = currentLineForChoiceParsing.match(/^(?:\[CHOICE:\s*)(.*?)(\]?)?$/i);
+
+    if (choiceTagMatch && choiceTagMatch[1]) {
+      choiceContent = choiceTagMatch[1].trim();
+      choiceContent = choiceContent.replace(/(\s*(?:`{1,3}|\*{2,})\s*)$/, "").trim();
+      choiceContent = choiceContent.replace(/^["']|["']$/g, '');
+      choiceContent = choiceContent.replace(/\\'/g, "'");
+      choiceContent = choiceContent.replace(/\\(?![btnfrv'"\\])/g, "");
+      choices.push({ text: choiceContent });
+    } else {
+      remainingLinesForNarration.push(line); 
+    }
+  }
+  narration = remainingLinesForNarration.join('\n');
+  
+  // STEP 2: Find all remaining tags (including potentially embedded choices)
   const allTagsRegex = /\[(.*?)\]/g;
   const foundRawTags: {fullTag: string, content: string}[] = [];
   let tempMatch;
-  while ((tempMatch = allTagsRegex.exec(responseText)) !== null) {
-    foundRawTags.push({fullTag: tempMatch[0], content: tempMatch[1].trim()});
+  
+  while ((tempMatch = allTagsRegex.exec(narration)) !== null) {
+      foundRawTags.push({fullTag: tempMatch[0], content: tempMatch[1].trim()});
   }
 
+  // STEP 3: Process foundRawTags, remove them from narration, and extract embedded choices
   for (const tagInfo of foundRawTags) {
-    const { fullTag, content } = tagInfo;
-
+    const { fullTag, content } = tagInfo; 
+    
     if (narration.includes(fullTag)) {
-        narration = narration.replace(fullTag, '');
+        narration = narration.replace(fullTag, ''); 
     }
 
-    const upperContent = content.toUpperCase();
+    // Robustly get tag name (part before first colon) and value (part after)
+    const colonIndex = content.indexOf(':');
+    const tagNamePart = (colonIndex === -1 ? content : content.substring(0, colonIndex)).trim().toUpperCase();
+    const tagValuePart = colonIndex === -1 ? "" : content.substring(colonIndex + 1).trim();
 
-    if (upperContent.startsWith('CHOICE:')) {
+    if (tagNamePart === 'MESSAGE') {
       try {
-        const choiceText = content.substring('CHOICE:'.length).trim().replace(/^"|"$/g, '');
-        if (choiceText) {
-            choices.push({ text: choiceText });
-        }
-      } catch (e) {
-        console.warn("Could not parse CHOICE tag content:", content, e);
-      }
-    } else if (upperContent.startsWith('MESSAGE:')) {
-      try {
-        systemMessage = content.substring('MESSAGE:'.length).trim().replace(/^"|"$/g, '');
-      } catch (e) {
-        console.warn("Could not parse MESSAGE tag content:", content, e);
-      }
-    } else if (!upperContent.startsWith('GENERATED_')) {
-      gameStateTags.push(fullTag);
+        systemMessage = tagValuePart.replace(/^["']|["']$/g, '');
+      } catch (e) { console.warn("Could not parse MESSAGE tag content:", content, e); }
+    } else if (tagNamePart === 'CHOICE') {
+      let choiceText = tagValuePart;
+      // Clean choiceText (same logic as in Step 1 for consistency)
+      choiceText = choiceText.replace(/(\s*(?:`{1,3}|\*{2,})\s*)$/, "").trim(); 
+      choiceText = choiceText.replace(/^["']|["']$/g, ''); 
+      choiceText = choiceText.replace(/\\'/g, "'"); 
+      choiceText = choiceText.replace(/\\(?![btnfrv'"\\])/g, ""); 
+      choices.push({ text: choiceText });
+    } else if (!tagNamePart.startsWith('GENERATED_')) { 
+      // Only add to gameStateTags if it's not MESSAGE, CHOICE, or GENERATED_
+      gameStateTags.push(fullTag); 
     }
   }
 
-  narration = narration.replace(/\n\s*\n/g, '\n').trim();
+  // STEP 4: Final cleanup of narration
+  narration = narration.replace(/\\/g, ''); 
+  narration = narration.replace(/`/g, '');   
+  narration = narration.replace(/"/g, ''); // Remove all double quotes
+  narration = narration.replace(/\*/g, ''); // Remove all asterisks
+
+
+  narration = narration
+    .split('\n')
+    .filter(line => line.trim() !== '') 
+    .join('\n');
+  narration = narration.replace(/\n\s*\n/g, '\n').trim(); 
 
   return { narration, choices, tags: gameStateTags, systemMessage };
 };
@@ -125,7 +196,7 @@ export const parseAiResponseText = (responseText: string): ParsedAiResponse => {
 
 const parseTagParams = (paramString: string): Record<string, string> => {
     const params: Record<string, string> = {};
-    const paramRegex = /(\w+)\s*=\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^,]*?)(?=\s*,\s*\w+\s*=|$))/g;
+    const paramRegex = /(\w+)\s*=\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|((?:\{.*?\}|\[.*?\]|[^,]*?)(?=\s*,\s*\w+\s*=|$)))/g;
     let match;
     while ((match = paramRegex.exec(paramString)) !== null) {
         const key = match[1].trim();
@@ -144,11 +215,14 @@ export const parseGeneratedWorldDetails = (responseText: string): GeneratedWorld
   const GWD_NPC = 'GENERATED_NPC:';
   const GWD_LORE = 'GENERATED_LORE:';
   const GWD_LOCATION = 'GENERATED_LOCATION:';
+  const GWD_FACTION = 'GENERATED_FACTION:';
   const GWD_PLAYER_NAME = 'GENERATED_PLAYER_NAME:';
+  const GWD_PLAYER_GENDER = 'GENERATED_PLAYER_GENDER:'; // New
   const GWD_PLAYER_PERSONALITY = 'GENERATED_PLAYER_PERSONALITY:';
   const GWD_PLAYER_BACKSTORY = 'GENERATED_PLAYER_BACKSTORY:';
   const GWD_PLAYER_GOAL = 'GENERATED_PLAYER_GOAL:';
   const GWD_PLAYER_STARTING_TRAITS = 'GENERATED_PLAYER_STARTING_TRAITS:';
+  const GWD_PLAYER_AVATAR_URL = 'GENERATED_PLAYER_AVATAR_URL:'; 
   const GWD_WORLD_THEME = 'GENERATED_WORLD_THEME:';
   const GWD_WORLD_SETTING_DESCRIPTION = 'GENERATED_WORLD_SETTING_DESCRIPTION:';
   const GWD_WORLD_WRITING_STYLE = 'GENERATED_WORLD_WRITING_STYLE:';
@@ -156,6 +230,10 @@ export const parseGeneratedWorldDetails = (responseText: string): GeneratedWorld
   const GWD_ORIGINAL_STORY_SUMMARY = 'GENERATED_ORIGINAL_STORY_SUMMARY:';
   const GWD_HE_THONG_CANH_GIOI = 'GENERATED_HE_THONG_CANH_GIOI:';
   const GWD_CANH_GIOI_KHOI_DAU = 'GENERATED_CANH_GIOI_KHOI_DAU:';
+  const GWD_GENRE = 'GENERATED_GENRE:';
+  const GWD_CUSTOM_GENRE_NAME = 'GENERATED_CUSTOM_GENRE_NAME:'; 
+  const GWD_IS_CULTIVATION_ENABLED = 'GENERATED_IS_CULTIVATION_ENABLED:';
+
 
   const generated: GeneratedWorldElements = {
     startingSkills: [],
@@ -163,6 +241,9 @@ export const parseGeneratedWorldDetails = (responseText: string): GeneratedWorld
     startingNPCs: [],
     startingLore: [],
     startingLocations: [],
+    startingFactions: [],
+    genre: AVAILABLE_GENRES[0], 
+    isCultivationEnabled: true, 
   };
 
   const originalStorySummaryRegex = /\[GENERATED_ORIGINAL_STORY_SUMMARY:\s*text\s*=\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')\s*\]/is;
@@ -204,19 +285,76 @@ export const parseGeneratedWorldDetails = (responseText: string): GeneratedWorld
             return;
         }
         const description = params.description || "Vật phẩm do AI tạo, chưa có mô tả.";
-        const itemType = params.type || "Linh tinh"; // Default type
         const quantity = parseInt(params.quantity || "1", 10);
-        
-        if (!isNaN(quantity)) {
-            generated.startingItems.push({
-                name,
-                description,
-                quantity: quantity > 0 ? quantity : 1,
-                type: itemType
-            });
-        } else {
+         if (isNaN(quantity) || quantity < 1) {
             console.warn("Skipping GENERATED_ITEM due to invalid 'quantity':", line);
+            return;
         }
+        
+        const category = params.category as GameTemplates.ItemCategoryValues;
+        if (!category || !Object.values(GameTemplates.ItemCategory).includes(category)) {
+            console.warn(`Skipping GENERATED_ITEM "${name}" due to missing or invalid 'category': "${params.category}". Line: ${line}`);
+            return;
+        }
+        
+        const rarity = params.rarity as GameTemplates.EquipmentRarity || GameTemplates.ItemRarity.PHO_THONG;
+        const value = params.value ? parseInt(params.value, 10) : 0;
+
+        const startingItem: StartingItem = {
+            name,
+            description,
+            quantity,
+            category,
+            rarity: Object.values(GameTemplates.ItemRarity).includes(rarity) ? rarity : GameTemplates.ItemRarity.PHO_THONG,
+            value: !isNaN(value) ? value : 0,
+            aiPreliminaryType: params.type 
+        };
+
+        if (category === GameTemplates.ItemCategory.EQUIPMENT) {
+            const equipmentType = params.equipmentType as GameTemplates.EquipmentTypeValues;
+            if (equipmentType && Object.values(GameTemplates.EquipmentType).includes(equipmentType)) {
+                startingItem.equipmentDetails = {
+                    type: equipmentType,
+                    slot: params.slot,
+                    uniqueEffectsString: params.uniqueEffectsList 
+                };
+                if (params.statBonusesJSON) {
+                    startingItem.equipmentDetails.statBonusesString = params.statBonusesJSON;
+                } else if (params.statBonuses) { 
+                     startingItem.equipmentDetails.statBonusesString = params.statBonuses;
+                }
+            } else {
+                 console.warn(`GENERATED_ITEM "${name}" is Equipment but 'equipmentType' is missing or invalid: "${params.equipmentType}". Line: ${line}`);
+            }
+        } else if (category === GameTemplates.ItemCategory.POTION) {
+            const potionType = params.potionType as GameTemplates.PotionTypeValues;
+             if (potionType && Object.values(GameTemplates.PotionType).includes(potionType)) {
+                startingItem.potionDetails = {
+                    type: potionType,
+                    effectsString: params.effectsList, 
+                    durationTurns: params.durationTurns ? parseInt(params.durationTurns, 10) : undefined,
+                    cooldownTurns: params.cooldownTurns ? parseInt(params.cooldownTurns, 10) : undefined,
+                };
+            } else {
+                console.warn(`GENERATED_ITEM "${name}" is Potion but 'potionType' is missing or invalid: "${params.potionType}". Line: ${line}`);
+            }
+        } else if (category === GameTemplates.ItemCategory.MATERIAL) {
+            const materialType = params.materialType as GameTemplates.MaterialTypeValues;
+            if (materialType && Object.values(GameTemplates.MaterialType).includes(materialType)) {
+                startingItem.materialDetails = { type: materialType };
+            } else {
+                 console.warn(`GENERATED_ITEM "${name}" is Material but 'materialType' is missing or invalid: "${params.materialType}". Defaulting to "Khác". Line: ${line}`);
+                 startingItem.materialDetails = { type: GameTemplates.MaterialType.KHAC }; // Default to "Khác"
+            }
+        } else if (category === GameTemplates.ItemCategory.QUEST_ITEM) {
+            startingItem.questItemDetails = { questIdAssociated: params.questIdAssociated };
+        } else if (category === GameTemplates.ItemCategory.MISCELLANEOUS) {
+            startingItem.miscDetails = {
+                usable: params.usable?.toLowerCase() === 'true',
+                consumable: params.consumable?.toLowerCase() === 'true',
+            };
+        }
+        generated.startingItems.push(startingItem);
 
     } else if (line.startsWith(`[${GWD_NPC}`)) {
         const content = line.substring(line.indexOf(GWD_NPC) + GWD_NPC.length, line.lastIndexOf(']')).trim();
@@ -229,13 +367,19 @@ export const parseGeneratedWorldDetails = (responseText: string): GeneratedWorld
         const personality = params.personality || "Bí ẩn";
         const details = params.details || "Không có thông tin chi tiết.";
         const initialAffinity = parseInt(params.initialAffinity || "0", 10);
+        const gender = params.gender as StartingNPC['gender'] || 'Không rõ';
+        const realm = params.realm;
+        const avatarUrl = params.avatarUrl; // Now we parse the avatar URL if AI suggests it
 
         if (!isNaN(initialAffinity)) {
             generated.startingNPCs.push({
                 name,
                 personality,
                 initialAffinity: Math.max(-100, Math.min(100, initialAffinity)),
-                details
+                details,
+                gender,
+                realm,
+                avatarUrl: avatarUrl || undefined // Store the suggested avatar URL
             });
         } else {
              console.warn("Skipping GENERATED_NPC due to invalid 'initialAffinity':", line);
@@ -271,11 +415,47 @@ export const parseGeneratedWorldDetails = (responseText: string): GeneratedWorld
             isSafeZone: params.isSafeZone?.toLowerCase() === 'true',
             regionId: params.regionId || undefined
         });
+    } else if (line.startsWith(`[${GWD_FACTION}`)) { 
+        const content = line.substring(line.indexOf(GWD_FACTION) + GWD_FACTION.length, line.lastIndexOf(']')).trim();
+        const params = parseTagParams(content);
+        const name = params.name;
+        if (!name) {
+            console.warn("Skipping GENERATED_FACTION due to missing 'name' parameter:", line);
+            return;
+        }
+        const description = params.description || "Phe phái chưa có mô tả.";
+        let alignment = params.alignment as GameTemplates.FactionAlignmentValues || GameTemplates.FactionAlignment.TRUNG_LAP;
+        
+        if (!ALL_FACTION_ALIGNMENTS.includes(alignment)) {
+            console.warn(`Skipping GENERATED_FACTION due to invalid 'alignment': "${alignment}". Using default. Original line:`, line);
+            alignment = GameTemplates.FactionAlignment.TRUNG_LAP;
+        }
 
+        const initialPlayerReputation = parseInt(params.initialPlayerReputation || "0", 10);
+        if (isNaN(initialPlayerReputation)) {
+            console.warn("Skipping GENERATED_FACTION due to invalid 'initialPlayerReputation':", line);
+            return; 
+        }
+
+        if (!generated.startingFactions) {
+            generated.startingFactions = [];
+        }
+        generated.startingFactions.push({
+            name,
+            description,
+            alignment,
+            initialPlayerReputation: Math.max(-100, Math.min(100, initialPlayerReputation))
+        });
     } else if (line.startsWith(`[${GWD_PLAYER_NAME}`)) {
         const content = line.substring(line.indexOf(GWD_PLAYER_NAME) + GWD_PLAYER_NAME.length, line.lastIndexOf(']')).trim();
         const params = parseTagParams(content);
         if (params.name) generated.playerName = params.name;
+    } else if (line.startsWith(`[${GWD_PLAYER_GENDER}`)) {
+        const content = line.substring(line.indexOf(GWD_PLAYER_GENDER) + GWD_PLAYER_GENDER.length, line.lastIndexOf(']')).trim();
+        const params = parseTagParams(content);
+        if (params.gender && ['Nam', 'Nữ', 'Khác'].includes(params.gender)) {
+            generated.playerGender = params.gender as 'Nam' | 'Nữ' | 'Khác';
+        }
     } else if (line.startsWith(`[${GWD_PLAYER_PERSONALITY}`)) {
         const content = line.substring(line.indexOf(GWD_PLAYER_PERSONALITY) + GWD_PLAYER_PERSONALITY.length, line.lastIndexOf(']')).trim();
         const params = parseTagParams(content);
@@ -292,6 +472,10 @@ export const parseGeneratedWorldDetails = (responseText: string): GeneratedWorld
         const content = line.substring(line.indexOf(GWD_PLAYER_STARTING_TRAITS) + GWD_PLAYER_STARTING_TRAITS.length, line.lastIndexOf(']')).trim();
         const params = parseTagParams(content);
         if (params.text) generated.playerStartingTraits = params.text;
+    } else if (line.startsWith(`[${GWD_PLAYER_AVATAR_URL}`)) { 
+        const content = line.substring(line.indexOf(GWD_PLAYER_AVATAR_URL) + GWD_PLAYER_AVATAR_URL.length, line.lastIndexOf(']')).trim();
+        const params = parseTagParams(content);
+        if (params.url) generated.playerAvatarUrl = params.url; // Store AI suggested player avatar URL
     } else if (line.startsWith(`[${GWD_WORLD_THEME}`)) {
         const content = line.substring(line.indexOf(GWD_WORLD_THEME) + GWD_WORLD_THEME.length, line.lastIndexOf(']')).trim();
         const params = parseTagParams(content);
@@ -316,6 +500,22 @@ export const parseGeneratedWorldDetails = (responseText: string): GeneratedWorld
         const content = line.substring(line.indexOf(GWD_CANH_GIOI_KHOI_DAU) + GWD_CANH_GIOI_KHOI_DAU.length, line.lastIndexOf(']')).trim();
         const params = parseTagParams(content);
         if (params.text) generated.canhGioiKhoiDau = params.text;
+    } else if (line.startsWith(`[${GWD_GENRE}`)) {
+        const content = line.substring(line.indexOf(GWD_GENRE) + GWD_GENRE.length, line.lastIndexOf(']')).trim();
+        const params = parseTagParams(content);
+        if (params.text && (AVAILABLE_GENRES.includes(params.text as GenreType) || params.text === CUSTOM_GENRE_VALUE) ) {
+            generated.genre = params.text as GenreType;
+        }
+    } else if (line.startsWith(`[${GWD_CUSTOM_GENRE_NAME}`)) {
+        const content = line.substring(line.indexOf(GWD_CUSTOM_GENRE_NAME) + GWD_CUSTOM_GENRE_NAME.length, line.lastIndexOf(']')).trim();
+        const params = parseTagParams(content);
+        if (params.text) generated.customGenreName = params.text;
+    } else if (line.startsWith(`[${GWD_IS_CULTIVATION_ENABLED}`)) {
+        const content = line.substring(line.indexOf(GWD_IS_CULTIVATION_ENABLED) + GWD_IS_CULTIVATION_ENABLED.length, line.lastIndexOf(']')).trim();
+        const params = parseTagParams(content);
+        if (params.value) {
+            generated.isCultivationEnabled = params.value.toLowerCase() === 'true';
+        }
     }
   });
 
@@ -325,7 +525,7 @@ export const parseGeneratedWorldDetails = (responseText: string): GeneratedWorld
 
 export const callGeminiAPI = async (
   prompt: string,
-  onPromptConstructed?: (constructedPrompt: string) => void
+  onPromptConstructedForLog?: (constructedPrompt: string) => void 
 ): Promise<string> => {
   let client: GoogleGenAI;
   try {
@@ -338,23 +538,26 @@ export const callGeminiAPI = async (
 
   const { model: configuredModel, safetySettings } = getApiSettings();
 
-  if (onPromptConstructed) {
-    onPromptConstructed(prompt);
+  if (onPromptConstructedForLog) { 
+    onPromptConstructedForLog(prompt);
   }
 
   try {
     const response: GenerateContentResponse = await client.models.generateContent({
-      model: configuredModel,
+      model: configuredModel, // Use the model from settings
       contents: prompt,
       config: {
         safetySettings: safetySettings,
+        // For gemini-2.5-flash-preview-04-17, if needed for other tasks later:
+        // ...(configuredModel === 'gemini-2.5-flash-preview-04-17' ? { thinkingConfig: { thinkingBudget: 0 } } : {}) 
       }
     });
 
     const responseText = response.text;
 
     if (!responseText) {
-      throw new Error("AI response was empty.");
+      console.warn("AI response was empty. This could be due to safety settings or an issue with the prompt/model. Response object:", response);
+      throw new Error("Phản hồi từ AI trống rỗng. Điều này có thể do cài đặt an toàn nội dung đã chặn phản hồi, hoặc có vấn đề với prompt/model.");
     }
     return responseText;
 
@@ -362,17 +565,16 @@ export const callGeminiAPI = async (
     console.error("Error calling Gemini API:", error);
     let detailedErrorMessage = error instanceof Error ? error.message : String(error);
     // @ts-ignore
-    if (error && (error as any).response && (error as any).response.candidates) {
-        // @ts-ignore
-        const candidates = (error as any).response.candidates;
-        if (candidates && candidates.length > 0 && candidates[0].finishReason === "SAFETY") {
-            detailedErrorMessage = "Nội dung đã bị chặn do cài đặt an toàn. Vui lòng điều chỉnh trong Thiết Lập API.";
-             if(candidates[0].safetyRatings) {
-                const blockedCategories = candidates[0].safetyRatings.filter((r: any) => r.blocked).map((r:any) => r.category);
-                if(blockedCategories.length > 0) {
-                    detailedErrorMessage += ` (Các danh mục bị ảnh hưởng: ${blockedCategories.join(', ')})`;
-                }
-             }
+    if (error && error.response && error.response.promptFeedback && error.response.promptFeedback.blockReason) {
+         // @ts-ignore
+        detailedErrorMessage = `Nội dung đã bị chặn do cài đặt an toàn. Lý do: ${error.response.promptFeedback.blockReason}. Vui lòng điều chỉnh trong Thiết Lập API.`;
+         // @ts-ignore
+        if (error.response.promptFeedback.safetyRatings && error.response.promptFeedback.safetyRatings.length > 0) {
+             // @ts-ignore
+            const blockedCategories = error.response.promptFeedback.safetyRatings.filter((r: any) => r.probability !== "NEGLIGIBLE").map((r:any) => `${r.category} (${r.probability})`);
+            if(blockedCategories.length > 0) {
+                detailedErrorMessage += ` (Các danh mục bị ảnh hưởng: ${blockedCategories.join(', ')})`;
+            }
         }
     }
     throw new Error(`${VIETNAMESE.errorOccurred} ${detailedErrorMessage}`);
@@ -381,10 +583,10 @@ export const callGeminiAPI = async (
 
 export const generateInitialStory = async (
   worldConfig: WorldSettings,
-  onPromptConstructed?: (prompt: string) => void
+  onPromptConstructedForLog?: (prompt: string) => void
 ): Promise<{response: ParsedAiResponse, rawText: string}> => {
   const prompt = PROMPT_TEMPLATES.initial(worldConfig);
-  const rawText = await callGeminiAPI(prompt, onPromptConstructed);
+  const rawText = await callGeminiAPI(prompt, onPromptConstructedForLog);
   const parsedResponse = parseAiResponseText(rawText);
   return {response: parsedResponse, rawText};
 };
@@ -397,7 +599,7 @@ export const generateNextTurn = async (
   currentPageMessagesLog: string,
   previousPageSummaries: string[],
   lastNarrationFromPreviousPage?: string,
-  onPromptConstructed?: (prompt: string) => void
+  onPromptConstructedForLog?: (prompt: string) => void
 ): Promise<{response: ParsedAiResponse, rawText: string}> => {
   const prompt = PROMPT_TEMPLATES.continue(
     knowledgeBase,
@@ -408,7 +610,7 @@ export const generateNextTurn = async (
     previousPageSummaries,
     lastNarrationFromPreviousPage
   );
-  const rawText = await callGeminiAPI(prompt, onPromptConstructed);
+  const rawText = await callGeminiAPI(prompt, onPromptConstructedForLog);
   const parsedResponse = parseAiResponseText(rawText);
   return {response: parsedResponse, rawText};
 };
@@ -416,12 +618,19 @@ export const generateNextTurn = async (
 export const generateWorldDetailsFromStory = async (
   storyIdea: string,
   isNsfwIdea: boolean,
-  onPromptConstructed?: (prompt: string) => void
-): Promise<{response: GeneratedWorldElements, rawText: string}> => {
-  const prompt = PROMPT_TEMPLATES.generateWorldDetails(storyIdea, isNsfwIdea);
-  const rawText = await callGeminiAPI(prompt, onPromptConstructed);
+  genre: GenreType,
+  isCultivationEnabled: boolean,
+  customGenreName?: string, 
+  onPromptConstructedForLog?: (prompt: string) => void 
+): Promise<{response: GeneratedWorldElements, rawText: string, constructedPrompt: string}> => {
+  const constructedPrompt = PROMPT_TEMPLATES.generateWorldDetails(storyIdea, isNsfwIdea, genre, isCultivationEnabled, customGenreName);
+  
+  if (onPromptConstructedForLog) {
+    onPromptConstructedForLog(constructedPrompt); 
+  }
+  const rawText = await callGeminiAPI(constructedPrompt, undefined); 
   const parsedResponse = parseGeneratedWorldDetails(rawText);
-  return {response: parsedResponse, rawText};
+  return {response: parsedResponse, rawText, constructedPrompt};
 };
 
 export const generateFanfictionWorldDetails = async (
@@ -429,60 +638,84 @@ export const generateFanfictionWorldDetails = async (
   isSourceContent: boolean,
   playerInputDescription?: string,
   isNsfwIdea?: boolean,
-  onPromptConstructed?: (prompt: string) => void
-): Promise<{response: GeneratedWorldElements, rawText: string}> => {
-  const prompt = PROMPT_TEMPLATES.generateFanfictionWorldDetails(sourceMaterial, isSourceContent, playerInputDescription, isNsfwIdea);
-  const rawText = await callGeminiAPI(prompt, onPromptConstructed);
+  genre?: GenreType,
+  isCultivationEnabled?: boolean,
+  customGenreName?: string, 
+  onPromptConstructedForLog?: (prompt: string) => void 
+): Promise<{response: GeneratedWorldElements, rawText: string, constructedPrompt: string}> => {
+  const constructedPrompt = PROMPT_TEMPLATES.generateFanfictionWorldDetails(sourceMaterial, isSourceContent, playerInputDescription, isNsfwIdea, genre, isCultivationEnabled, customGenreName);
+  if (onPromptConstructedForLog) {
+    onPromptConstructedForLog(constructedPrompt);
+  }
+  const rawText = await callGeminiAPI(constructedPrompt, undefined);
   const parsedResponse = parseGeneratedWorldDetails(rawText);
-  return {response: parsedResponse, rawText};
+  return {response: parsedResponse, rawText, constructedPrompt};
 };
 
 export const summarizeTurnHistory = async (
   messagesToSummarize: GameMessage[],
   worldTheme: string,
   playerName: string,
-  onPromptConstructed?: (constructedPrompt: string) => void,
-  onResponseReceived?: (rawText: string) => void
-): Promise<{ rawText: string, processedSummary: string }> => {
-  if (!messagesToSummarize || messagesToSummarize.length === 0) {
-    const noContentMsg = VIETNAMESE.noContentToSummarize || "Không có diễn biến nào đáng kể trong trang này.";
-    return { rawText: noContentMsg, processedSummary: noContentMsg };
-  }
-  const prompt = PROMPT_TEMPLATES.summarizePage(messagesToSummarize, worldTheme, playerName);
-
-  try {
-    const rawText = await callGeminiAPI(prompt, onPromptConstructed);
-    if (onResponseReceived) {
-        onResponseReceived(rawText);
-    }
-    const processedSummary = rawText.replace(/```json\s*|\s*```/g, '').trim();
-    return { rawText, processedSummary };
-  } catch (error) {
-    console.error("Error generating page summary:", error);
-    const errorMsg = `Lỗi tóm tắt trang: ${error instanceof Error ? error.message : "Không rõ"}`;
-    return { rawText: `Error in summarizeTurnHistory: ${errorMsg}`, processedSummary: errorMsg };
-  }
+  genre?: GenreType, 
+  customGenreName?: string, 
+  onPromptConstructedForLog?: (prompt: string) => void,
+  onSummarizationResponseForLog?: (response: string) => void 
+): Promise<{ processedSummary: string, rawSummary: string }> => {
+  const prompt = PROMPT_TEMPLATES.summarizePage(messagesToSummarize, worldTheme, playerName, genre, customGenreName);
+  const rawText = await callGeminiAPI(prompt, onPromptConstructedForLog);
+  if(onSummarizationResponseForLog) onSummarizationResponseForLog(rawText);
+  // For now, processed summary is same as raw. Can add more processing if needed.
+  return { processedSummary: rawText, rawSummary: rawText };
 };
 
 export const countTokens = async (text: string): Promise<number> => {
-  let client: GoogleGenAI;
-  try {
-    client = getAiClient();
-  } catch (clientError) {
-    console.error("Error obtaining AI client for token counting:", clientError);
-    throw new Error(`Lỗi API Client khi đếm token: ${clientError instanceof Error ? clientError.message : String(clientError)}`);
-  }
-
+  const client = getAiClient(); // Gets the client, initializes if necessary with user/system key
   const { model: configuredModel } = getApiSettings();
-
   try {
     const response: CountTokensResponse = await client.models.countTokens({
-      model: configuredModel,
+      model: configuredModel, // Use the same model as for generation for more accurate count
       contents: text,
     });
     return response.totalTokens;
   } catch (error) {
-    console.error("Error counting tokens with Gemini API:", error);
-    throw new Error(`Lỗi khi đếm token bằng Gemini API: ${error instanceof Error ? error.message : String(error)}`);
+    console.error("Error counting tokens:", error);
+    // Depending on how critical token count is, rethrow or return a specific value like -1
+    throw new Error(`Error counting tokens: ${error instanceof Error ? error.message : String(error)}`);
   }
 };
+
+export const generateCraftedItemViaAI = async (
+  desiredCategory: GameTemplates.ItemCategoryValues,
+  requirements: string,
+  materials: Array<{ name: string; description: string; category: GameTemplates.ItemCategoryValues; materialType?: GameTemplates.MaterialTypeValues }>,
+  playerStats: PlayerStats, 
+  playerName?: string,
+  genre?: GenreType,
+  isCultivationEnabled?: boolean,
+  customGenreName?: string,
+  onPromptConstructedForLog?: (prompt: string) => void
+): Promise<{response: ParsedAiResponse, rawText: string}> => {
+  const prompt = PROMPT_TEMPLATES.craftItem(desiredCategory, requirements, materials, playerStats, playerName, genre, isCultivationEnabled, customGenreName);
+  const rawText = await callGeminiAPI(prompt, onPromptConstructedForLog);
+  const parsedResponse = parseAiResponseText(rawText); // Parse for narration and ITEM_ACQUIRED tag
+  return {response: parsedResponse, rawText};
+};
+
+/**
+ * Generates an image based on the selected image model in API settings.
+ * @param prompt The text prompt to generate the image from.
+ * @returns A Promise that resolves to the base64 encoded string of the generated image (without data URI prefix).
+ */
+export async function generateImageUnified(prompt: string): Promise<string> {
+  const settings = getApiSettings();
+  const { imageModel } = settings;
+
+  if (imageModel === 'imagen-3.0-generate-002') {
+    return generateImageWithImagen3(prompt);
+  } else if (imageModel === 'gemini-2.0-flash-preview-image-generation') {
+    return generateImageWithGemini2Flash(prompt);
+  } else {
+    console.warn(`Unknown image model selected: ${imageModel}. Defaulting to Imagen 3.0.`);
+    return generateImageWithImagen3(prompt);
+  }
+}

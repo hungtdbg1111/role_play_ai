@@ -2,7 +2,7 @@
 import React, { useState, useEffect, ChangeEvent } from 'react';
 import { StyleSettings, StyleSettingProperty } from '../types';
 import Button from './ui/Button';
-import Modal from './ui/Modal'; // Assuming a generic Modal component exists
+import Modal from './ui/Modal'; // Corrected import path
 import { VIETNAMESE, AVAILABLE_FONTS, AVAILABLE_FONT_SIZES, DEFAULT_STYLE_SETTINGS } from '../constants';
 
 interface StyleSettingsModalProps {

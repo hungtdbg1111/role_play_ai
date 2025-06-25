@@ -1,3 +1,7 @@
+### Bản Cập Nhật Chính - Phiên bản 1.2.3 (Ngày 25/06/2025)
+**Lười ghi quá**
+
+---
 ### Bản Cập Nhật phụ - Phiên bản 1.1.0 (Ngày 23/06/2025)
 
 **Làm lại hệ thống save game:** thêm auto save, 1 world chỉ được có 1 save riêng mà thôi.

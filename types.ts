@@ -1,7 +1,9 @@
 
+
 import type { User as FirebaseUserType } from 'firebase/auth';
 import { HarmCategory, HarmBlockThreshold } from "@google/genai";
 import * as GameTemplates from './templates'; // Import all templates
+import { AVAILABLE_GENRES as AVAILABLE_GENRES_VALUES, CUSTOM_GENRE_VALUE } from './constants'; // Import for GenreType
 
 export enum GameScreen {
   Initial = 'Initial',
@@ -11,6 +13,8 @@ export enum GameScreen {
   LoadGameSelection = 'LoadGameSelection',
   StorageSettings = 'StorageSettings',
   ImportExport = 'ImportExport',
+  Equipment = 'Equipment', 
+  Crafting = 'Crafting',
 }
 
 export type FirebaseUser = FirebaseUserType;
@@ -32,20 +36,44 @@ export interface StorageSettings {
   firebaseUserConfig: FirebaseUserConfig | null;
 }
 
+export type StatusEffectType = 'buff' | 'debuff' | 'neutral';
+
+export interface StatusEffect {
+  id: string;
+  name: string;
+  description: string;
+  type: StatusEffectType;
+  durationTurns: number; // 0 or -1 for permanent or until removed by tag
+  statModifiers: Partial<Record<keyof Omit<PlayerStats, 'realm' | 'currency' | 'isInCombat' | 'turn' | 'hieuUngBinhCanh' | 'activeStatusEffects' | 'sinhLuc' | 'linhLuc' | 'kinhNghiem' | 'baseMaxKinhNghiem' | 'baseMaxLinhLuc' | 'baseMaxSinhLuc' | 'baseSucTanCong'>, string | number>>; // e.g. {"sucTanCong": 10, "maxSinhLuc": "-5%"}
+  specialEffects: string[]; // Text descriptions of non-stat effects
+  icon?: string;
+  source?: string; // e.g., skill name, item name, event
+}
+
 export interface PlayerStats {
+  // Base stats (derived from realm or default if cultivation disabled)
+  baseMaxSinhLuc: number;
+  baseMaxLinhLuc: number; // Could be 0 or repurposed if cultivation disabled
+  baseSucTanCong: number;
+  baseMaxKinhNghiem: number; // Could be 0 or repurposed if cultivation disabled
+
+  // Effective stats (base + equipment + temporary effects)
   sinhLuc: number;
-  maxSinhLuc: number;
-  linhLuc: number;
-  maxLinhLuc: number;
-  sucTanCong: number;
-  kinhNghiem: number;
-  maxKinhNghiem: number;
-  realm: string; // e.g., "Phàm Nhân Nhất Trọng"
+  maxSinhLuc: number; // Effective Max HP
+  linhLuc: number; // Effective Max MP/Stamina
+  maxLinhLuc: number; // Effective Max MP/Stamina
+  sucTanCong: number; // Effective Attack
+  kinhNghiem: number; // Current EXP or Skill Points
+  maxKinhNghiem: number; // Max EXP for current level or general level cap
+  
+  realm: string; // e.g., "Phàm Nhân Nhất Trọng" or "Người Thường Cấp 1"
   currency: number;
   isInCombat: boolean;
   turn: number;
-  hieuUngBinhCanh: boolean; // Bottleneck effect
+  hieuUngBinhCanh: boolean; // Bottleneck effect (only if cultivation enabled)
+  activeStatusEffects: StatusEffect[]; // New: Active status effects
 }
+
 
 // Use the new InventoryItem union from templates.ts as the primary Item type
 export type Item = GameTemplates.InventoryItem;
@@ -77,9 +105,9 @@ export interface Companion { // Companion can remain simpler or also be template
   id: string;
   name: string;
   description: string;
-  hp: number; // Companions might still use HP for simplicity unless they also get full cultivation
+  hp: number; 
   maxHp: number;
-  mana: number;
+  mana: number; // May need to adapt if cultivation disabled
   maxMana: number;
   atk: number;
 }
@@ -93,21 +121,54 @@ export interface WorldLoreEntry {
 // Starting entities remain simple for AI generation, game logic can map them to richer templates
 export interface StartingSkill {
   name: string;
-  description: string; // AI provides this, game can map to a full SkillTemplate
+  description: string; 
 }
 
 export interface StartingItem {
   name: string;
   description: string;
   quantity: number;
-  type: string; // AI provides a general type, game can map to ItemCategory and specific item type
+  category: GameTemplates.ItemCategoryValues;
+  rarity?: GameTemplates.EquipmentRarity;
+  value?: number;
+
+  equipmentDetails?: {
+    type?: GameTemplates.EquipmentTypeValues; 
+    slot?: string;
+    statBonuses?: Partial<Omit<PlayerStats, 'realm' | 'currency' | 'isInCombat' | 'turn' | 'hieuUngBinhCanh' | 'baseMaxKinhNghiem' | 'baseMaxLinhLuc' | 'baseMaxSinhLuc' | 'baseSucTanCong' | 'activeStatusEffects'>>; 
+    statBonusesString?: string; 
+    uniqueEffects?: string[];
+    uniqueEffectsString?: string; 
+  };
+  potionDetails?: {
+    type?: GameTemplates.PotionTypeValues; 
+    effects?: string[];
+    effectsString?: string; 
+    durationTurns?: number;
+    cooldownTurns?: number;
+  };
+  materialDetails?: {
+    type?: GameTemplates.MaterialTypeValues; 
+  };
+  questItemDetails?: {
+    questIdAssociated?: string;
+  };
+  miscDetails?: {
+    usable?: boolean;
+    consumable?: boolean;
+  };
+  aiPreliminaryType?: string; // Used by AI assist to help categorize, then game logic confirms
 }
+
 
 export interface StartingNPC {
   name: string;
-  personality: string; // AI provides this
+  personality: string; 
   initialAffinity: number;
-  details: string; // AI provides this
+  details: string; 
+  gender?: 'Nam' | 'Nữ' | 'Khác' | 'Không rõ'; // Gender for starting NPC definition
+  realm?: string; // Realm for starting NPC definition
+  avatarUrl?: string; // Can be placeholder or Cloudinary URL
 }
 
 export interface StartingLore {
@@ -115,15 +176,25 @@ export interface StartingLore {
   content: string;
 }
 
-export interface StartingLocation { // New interface for starting locations
+export interface StartingLocation { 
   name: string;
   description: string;
   isSafeZone?: boolean;
   regionId?: string;
 }
 
+export interface StartingFaction {
+  name: string;
+  description: string;
+  alignment: GameTemplates.FactionAlignmentValues;
+  initialPlayerReputation: number;
+}
+
+export type GenreType = typeof AVAILABLE_GENRES_VALUES[number];
+export type CustomGenreType = typeof CUSTOM_GENRE_VALUE;
+
 export interface WorldSettings {
-  saveGameName: string; // Added field for save game name
+  saveGameName: string; 
   theme: string;
   settingDescription: string;
   writingStyle: string;
@@ -136,42 +207,71 @@ export interface WorldSettings {
   playerGoal: string;
   playerStartingTraits: string;
   startingSkills: StartingSkill[];
-  startingItems: StartingItem[];
+  startingItems: StartingItem[]; 
   startingNPCs: StartingNPC[];
   startingLore: StartingLore[];
   startingLocations: StartingLocation[];
+  startingFactions: StartingFaction[]; 
   nsfwMode?: boolean;
   originalStorySummary?: string;
-  heThongCanhGioi: string; // e.g., "Phàm Nhân - Luyện Khí - Trúc Cơ"
-  canhGioiKhoiDau: string; // e.g., "Phàm Nhân Nhất Trọng"
+  
+  // Genre and Cultivation System
+  genre: GenreType;
+  customGenreName?: string; // For "Khác (Tự định nghĩa)"
+  isCultivationEnabled: boolean;
+  heThongCanhGioi: string; // e.g., "Phàm Nhân - Luyện Khí - Trúc Cơ" - Only if isCultivationEnabled
+  canhGioiKhoiDau: string; // e.g., "Phàm Nhân Nhất Trọng" - Only if isCultivationEnabled
+
+  // Player Avatar
+  playerAvatarUrl?: string; // URL (Cloudinary, placeholder, or 'uploaded_via_file' if data is in KB)
 }
 
 export interface TurnHistoryEntry {
-  knowledgeBaseSnapshot: KnowledgeBase; // Snapshot of KB *before* this turn's action was processed
-  gameMessagesSnapshot: GameMessage[];  // Snapshot of messages *before* this turn's action was processed
+  knowledgeBaseSnapshot: KnowledgeBase; 
+  gameMessagesSnapshot: GameMessage[];  
 }
 
 export interface RealmBaseStatDefinition {
-  hpBase: number;         // Base HP at Nhất Trọng of this main realm tier
-  hpInc: number;          // HP increment per sub-level within this main realm tier
-  mpBase: number;         // Base MP at Nhất Trọng
-  mpInc: number;          // MP increment per sub-level
-  atkBase: number;        // Base ATK at Nhất Trọng
-  atkInc: number;         // ATK increment per sub-level
-  expBase: number;        // Max EXP at Nhất Trọng (to reach next sub-level)
-  expInc: number;         // Additional Max EXP per sub-level
+  hpBase: number;         
+  hpInc: number;          
+  mpBase: number;         
+  mpInc: number;          
+  atkBase: number;        
+  atkInc: number;         
+  expBase: number;        
+  expInc: number;         
+}
+
+export type EquipmentSlotId = 
+  | 'mainWeapon' 
+  | 'offHandWeapon' 
+  | 'head' 
+  | 'body' 
+  | 'hands' 
+  | 'legs' 
+  | 'artifact' 
+  | 'pet' 
+  | 'accessory1' 
+  | 'accessory2';
+
+export interface EquipmentSlotConfig {
+  id: EquipmentSlotId;
+  labelKey: keyof typeof import('./constants').VIETNAMESE; 
+  accepts: GameTemplates.EquipmentTypeValues[];
+  icon?: string; 
 }
 
 export interface KnowledgeBase {
   playerStats: PlayerStats;
-  inventory: Item[]; // Now uses the new rich Item type (InventoryItem union)
-  playerSkills: Skill[]; // Now uses SkillTemplate
+  inventory: Item[]; 
+  equippedItems: Record<EquipmentSlotId, Item['id'] | null>; 
+  playerSkills: Skill[]; 
   allQuests: Quest[];
-  discoveredNPCs: NPC[]; // Now uses NPCTemplate
-  discoveredLocations: GameLocation[]; // Now uses LocationTemplate
-  discoveredFactions: Faction[]; // New field for factions
-  realmProgressionList: string[]; // This might become deprecated or derived from worldConfig.heThongCanhGioi
-  currentRealmBaseStats: Record<string, RealmBaseStatDefinition>; // Dynamically generated BASE_STATS_MAP
+  discoveredNPCs: NPC[]; 
+  discoveredLocations: GameLocation[]; 
+  discoveredFactions: Faction[]; 
+  realmProgressionList: string[]; // Only if cultivation enabled
+  currentRealmBaseStats: Record<string, RealmBaseStatDefinition>; // Only if cultivation enabled
   worldConfig: WorldSettings | null;
   companions: Companion[];
   worldLore: WorldLoreEntry[];
@@ -179,14 +279,15 @@ export interface KnowledgeBase {
   pageSummaries?: Record<number, string>;
   currentPageHistory?: number[];
   lastSummarizedTurn?: number;
-  turnHistory?: TurnHistoryEntry[]; // For rollback functionality
+  turnHistory?: TurnHistoryEntry[]; 
 
-  // New fields for save system
-  autoSaveTurnCounter: number;      // Counter for auto-save interval (0 to AUTO_SAVE_INTERVAL_TURNS - 1)
-  currentAutoSaveSlotIndex: number; // Index of the next auto-save slot (0 to MAX_AUTO_SAVE_SLOTS - 1)
-  autoSaveSlotIds: (string | null)[]; // Stores the actual DB/Firestore IDs for each auto-save slot
-  manualSaveId: string | null;        // Stores the actual DB/Firestore ID for the world's manual save
-  manualSaveName: string | null;      // User-defined name for the manual save
+  autoSaveTurnCounter: number;      
+  currentAutoSaveSlotIndex: number; 
+  autoSaveSlotIds: (string | null)[]; 
+  manualSaveId: string | null;        
+  manualSaveName: string | null;   
+  
+  playerAvatarData?: string; // Base64 data for player's uploaded avatar (before Cloudinary upload) or Cloudinary URL post-upload.
 }
 
 export interface AiChoice {
@@ -197,7 +298,7 @@ export interface AiChoice {
 export interface GameMessage {
   id: string;
   type: 'narration' | 'choice' | 'system' | 'player_action' | 'error' | 'page_summary';
-  content: string;
+  content: string; 
   timestamp: number;
   choices?: AiChoice[];
   isPlayerInput?: boolean;
@@ -219,14 +320,16 @@ export interface SafetySetting {
 export interface ApiConfig {
   apiKeySource: 'system' | 'user';
   userApiKey: string;
-  model: string;
+  model: string; // For text generation
+  imageModel: string; // For image generation
   safetySettings?: SafetySetting[];
+  autoGenerateNpcAvatars: boolean; 
 }
 
 export interface SaveGameData {
-  id?: string; // Made optional for data being prepared for save, ID assigned by storage
+  id?: string; 
   name: string;
-  timestamp: any; // Can be Date for local, or serverTimestamp for Firestore, then Date on load
+  timestamp: any; 
   knowledgeBase: KnowledgeBase;
   gameMessages: GameMessage[];
   appVersion?: string;
@@ -236,7 +339,7 @@ export interface SaveGameMeta {
     id: string;
     name: string;
     timestamp: Date;
-    size?: number; // Estimated size in bytes
+    size?: number; 
 }
 
 export type PlayerActionInputType = 'action' | 'story';
@@ -254,26 +357,32 @@ export interface StyleSettings {
   narration: StyleSettingProperty;
   playerAction: StyleSettingProperty;
   choiceButton: StyleSettingProperty;
-  keywordHighlight: StyleSettingProperty; // New
+  keywordHighlight: StyleSettingProperty; 
 }
 
 export interface GeneratedWorldElements {
   startingSkills: StartingSkill[];
-  startingItems: StartingItem[];
+  startingItems: StartingItem[]; 
   startingNPCs: StartingNPC[];
   startingLore: StartingLore[];
   startingLocations?: StartingLocation[];
+  startingFactions?: StartingFaction[]; 
   playerName?: string;
+  playerGender?: 'Nam' | 'Nữ' | 'Khác';
   playerPersonality?: string;
   playerBackstory?: string;
   playerGoal?: string;
   playerStartingTraits?: string;
+  playerAvatarUrl?: string; // Could be Cloudinary URL from AI generation during setup
   worldTheme?: string;
   worldSettingDescription?: string;
   worldWritingStyle?: string;
   currencyName?: string;
   originalStorySummary?: string;
-  heThongCanhGioi?: string;
-  canhGioiKhoiDau?: string;
-  saveGameName?: string; // Added here for AI generation if desired
+  heThongCanhGioi?: string; // Only if cultivation enabled
+  canhGioiKhoiDau?: string; // Only if cultivation enabled
+  saveGameName?: string; 
+  genre?: GenreType; 
+  customGenreName?: string; // For "Khác (Tự định nghĩa)"
+  isCultivationEnabled?: boolean; 
 }

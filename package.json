@@ -12,7 +12,9 @@
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "@google/genai": "^1.5.1",
-    "firebase": "^11.9.1"
+    "firebase": "^11.9.1",
+    "@cloudinary/url-gen": "^1.19.0",
+    "@cloudinary/react": "^1.13.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

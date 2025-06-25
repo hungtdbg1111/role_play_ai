@@ -1,9 +1,9 @@
 
 import { useState, useCallback } from 'react';
-import { KnowledgeBase, GameMessage, WorldSettings, PlayerActionInputType, ResponseLength, GameScreen, RealmBaseStatDefinition, TurnHistoryEntry } from '../types';
+import { KnowledgeBase, GameMessage, WorldSettings, PlayerActionInputType, ResponseLength, GameScreen, RealmBaseStatDefinition, TurnHistoryEntry, FirebaseUser } from '../types';
 import { INITIAL_KNOWLEDGE_BASE, APP_VERSION, DEFAULT_PLAYER_STATS, DEFAULT_TIERED_STATS, TURNS_PER_PAGE, MAX_TURN_HISTORY_LENGTH, AUTO_SAVE_INTERVAL_TURNS, MAX_AUTO_SAVE_SLOTS, VIETNAMESE, SUB_REALM_NAMES } from '../constants';
 import { generateInitialStory, generateNextTurn, summarizeTurnHistory, countTokens, getApiSettings as getGeminiApiSettings } from '../services/geminiService';
-import { performTagProcessing, calculateStatsForRealm, addTurnHistoryEntry, getMessagesForPage as getMessagesForPageUtil } from '../utils/gameLogicUtils';
+import { performTagProcessing, calculateRealmBaseStats, addTurnHistoryEntry, getMessagesForPage, calculateEffectiveStats } from '../utils/gameLogicUtils';
 
 interface UseGameActionsProps {
   knowledgeBase: KnowledgeBase;
@@ -21,13 +21,14 @@ interface UseGameActionsProps {
   isAutoPlaying: boolean;
   setIsAutoPlaying: React.Dispatch<React.SetStateAction<boolean>>;
   executeSaveGame: (kbToSave: KnowledgeBase, messagesToSave: GameMessage[], saveName: string, existingId: string | null, isAuto: boolean) => Promise<string | null>;
-  storageType: string; // Assuming storageType is passed down or determined appropriately
-  firebaseUser: any; // Assuming firebaseUser is available for cloud saves
+  storageType: string; 
+  firebaseUser: FirebaseUser | null; 
+  logNpcAvatarPromptCallback: (prompt: string) => void; // New callback
 }
 
 export const useGameActions = ({
   knowledgeBase,
-  setKnowledgeBase,
+  setKnowledgeBase, // This is the direct setter from useGameData
   gameMessages,
   addMessageAndUpdateState,
   setRawAiResponsesLog,
@@ -43,6 +44,7 @@ export const useGameActions = ({
   executeSaveGame,
   storageType,
   firebaseUser,
+  logNpcAvatarPromptCallback, // Destructure new callback
 }: UseGameActionsProps) => {
   const [isLoadingApi, setIsLoadingApi] = useState<boolean>(false);
   const [apiError, setApiError] = useState<string | null>(null);
@@ -51,9 +53,7 @@ export const useGameActions = ({
   const logSentPromptCallback = useCallback((prompt: string) => {
     setSentPromptsLog(prev => [prompt, ...prev].slice(0, 10));
     const { model: currentModel } = getGeminiApiSettings();
-    if (currentModel === 'gemini-1.5-flash') {
-      setLatestPromptTokenCount('N/A (model)');
-    } else {
+    if (currentModel === 'gemini-2.5-flash-preview-04-17' || !currentModel.startsWith('gemini-1.5-flash')) { 
       setLatestPromptTokenCount('Đang tính...');
       countTokens(prompt)
         .then(count => setLatestPromptTokenCount(count))
@@ -61,6 +61,8 @@ export const useGameActions = ({
           console.warn("Could not count tokens for prompt:", err);
           setLatestPromptTokenCount('Lỗi');
         });
+    } else {
+       setLatestPromptTokenCount('N/A (model)');
     }
   }, [setSentPromptsLog, setLatestPromptTokenCount]);
 
@@ -68,7 +70,7 @@ export const useGameActions = ({
     setSummarizationResponsesLog(prev => [response, ...prev].slice(0, 10));
   }, [setSummarizationResponsesLog]);
 
-  const handleSetupComplete = useCallback(async (settings: WorldSettings) => {
+  const handleSetupComplete = useCallback(async (settings: WorldSettings) => { // Removed playerAvatarDataSource
     setIsLoadingApi(true);
     setApiError(null);
     
@@ -80,23 +82,27 @@ export const useGameActions = ({
         generatedBaseStats[realmName] = DEFAULT_TIERED_STATS[Math.min(index, DEFAULT_TIERED_STATS.length - 1)];
     });
     
-    const initialCalculatedStats = calculateStatsForRealm(initialRealm, realmProgression, generatedBaseStats);
+    const initialCalculatedStats = calculateRealmBaseStats(initialRealm, realmProgression, generatedBaseStats);
+    
+    // Settings already contains playerAvatarUrl (potentially Cloudinary URL from App.tsx wrapper)
+    const worldConfigForKb = { ...settings }; 
 
-    const initialKB: KnowledgeBase = {
-      ...INITIAL_KNOWLEDGE_BASE,
+    let minimalInitialKB: KnowledgeBase = {
+      ...INITIAL_KNOWLEDGE_BASE, 
       playerStats: {
-        ...DEFAULT_PLAYER_STATS,
-        realm: initialRealm,
+        ...DEFAULT_PLAYER_STATS, 
+        realm: initialRealm, 
         ...initialCalculatedStats, 
-        sinhLuc: initialCalculatedStats.maxSinhLuc || DEFAULT_PLAYER_STATS.maxSinhLuc,
-        linhLuc: initialCalculatedStats.maxLinhLuc || DEFAULT_PLAYER_STATS.maxLinhLuc,
+        sinhLuc: initialCalculatedStats.baseMaxSinhLuc || DEFAULT_PLAYER_STATS.maxSinhLuc,
+        linhLuc: initialCalculatedStats.baseMaxLinhLuc || DEFAULT_PLAYER_STATS.maxLinhLuc,
         kinhNghiem: 0,
-        turn: 0,
+        turn: 0, 
         hieuUngBinhCanh: false,
+        activeStatusEffects: [], 
       },
       realmProgressionList: realmProgression,
       currentRealmBaseStats: generatedBaseStats,
-      worldConfig: settings, 
+      worldConfig: worldConfigForKb, 
       appVersion: APP_VERSION,
       pageSummaries: {},
       currentPageHistory: [1], 
@@ -107,42 +113,51 @@ export const useGameActions = ({
       autoSaveSlotIds: Array(MAX_AUTO_SAVE_SLOTS).fill(null),
       manualSaveId: null,
       manualSaveName: settings.saveGameName || VIETNAMESE.saveGameNamePlaceholder.replace("[Tên Nhân Vật]", settings.playerName || "Tân Đạo Hữu"),
+      // Use the playerAvatarUrl from settings (which could be Cloudinary URL)
+      playerAvatarData: worldConfigForKb.playerAvatarUrl || undefined, 
     };
     
-    setCurrentPageDisplay(1); 
+    setKnowledgeBase(minimalInitialKB); // Set the main KB state
+    setCurrentPageDisplay(1);
+    setCurrentScreen(GameScreen.Gameplay); 
 
     try {
-      const {response, rawText} = await generateInitialStory(settings, logSentPromptCallback);
+      const {response, rawText} = await generateInitialStory(minimalInitialKB.worldConfig!, logSentPromptCallback); 
       setRawAiResponsesLog(prev => [rawText, ...prev].slice(0,50));
       
-      const { newKb: kbAfterTags, turnIncrementedByTag, systemMessagesFromTags: systemMessagesFromInitialTags, realmChangedByTag: realmChangedByInitTag } = performTagProcessing(initialKB, response.tags, 1);
+      let workingKbForProcessing = JSON.parse(JSON.stringify(minimalInitialKB));
       
-      let finalKbForSetup = kbAfterTags;
+      const { 
+        newKb: kbAfterTags, 
+        turnIncrementedByTag, 
+        systemMessagesFromTags: systemMessagesFromInitialTags, 
+        realmChangedByTag: realmChangedByInitTag 
+      } = await performTagProcessing(workingKbForProcessing, response.tags, 1, setKnowledgeBase, logNpcAvatarPromptCallback); // Pass callback
+      
+      let finalKbForDisplay = kbAfterTags;
       let turnForInitialMessages = 1;
 
-      if (turnIncrementedByTag && finalKbForSetup.playerStats.turn > 0) {
-          turnForInitialMessages = finalKbForSetup.playerStats.turn;
+      if (turnIncrementedByTag && finalKbForDisplay.playerStats.turn > 0) {
+          turnForInitialMessages = finalKbForDisplay.playerStats.turn; 
       } else {
-          finalKbForSetup.playerStats.turn = 1; 
+          finalKbForDisplay.playerStats.turn = 1; 
           turnForInitialMessages = 1;
       }
       
       if (realmChangedByInitTag) {
-          const reCalculatedStats = calculateStatsForRealm(finalKbForSetup.playerStats.realm, finalKbForSetup.realmProgressionList, finalKbForSetup.currentRealmBaseStats);
-          finalKbForSetup.playerStats = { ...finalKbForSetup.playerStats, ...reCalculatedStats };
-          finalKbForSetup.playerStats.sinhLuc = finalKbForSetup.playerStats.maxSinhLuc;
-          finalKbForSetup.playerStats.linhLuc = finalKbForSetup.playerStats.maxLinhLuc;
-          finalKbForSetup.playerStats.kinhNghiem = Math.min(finalKbForSetup.playerStats.kinhNghiem, finalKbForSetup.playerStats.maxKinhNghiem);
+          const reCalculatedStats = calculateRealmBaseStats(finalKbForDisplay.playerStats.realm, finalKbForDisplay.realmProgressionList, finalKbForDisplay.currentRealmBaseStats);
+          finalKbForDisplay.playerStats = { ...finalKbForDisplay.playerStats, ...reCalculatedStats };
+          finalKbForDisplay.playerStats.sinhLuc = finalKbForDisplay.playerStats.maxSinhLuc;
+          finalKbForDisplay.playerStats.linhLuc = finalKbForDisplay.playerStats.maxLinhLuc;
+          finalKbForDisplay.playerStats.kinhNghiem = Math.min(finalKbForDisplay.playerStats.kinhNghiem, finalKbForDisplay.playerStats.maxKinhNghiem);
       } else {
-          finalKbForSetup.playerStats.sinhLuc = initialCalculatedStats.maxSinhLuc || finalKbForSetup.playerStats.maxSinhLuc;
-          finalKbForSetup.playerStats.linhLuc = initialCalculatedStats.maxLinhLuc || finalKbForSetup.playerStats.maxLinhLuc;
+          finalKbForDisplay.playerStats.sinhLuc = initialCalculatedStats.baseMaxSinhLuc || finalKbForDisplay.playerStats.maxSinhLuc;
+          finalKbForDisplay.playerStats.linhLuc = initialCalculatedStats.baseMaxLinhLuc || finalKbForDisplay.playerStats.maxLinhLuc;
       }
       
-      if (finalKbForSetup.currentPageHistory?.length === 1 && finalKbForSetup.currentPageHistory[0] !== turnForInitialMessages) {
-          finalKbForSetup.currentPageHistory = [turnForInitialMessages];
-      } else if (!finalKbForSetup.currentPageHistory || finalKbForSetup.currentPageHistory.length === 0) {
-          finalKbForSetup.currentPageHistory = [turnForInitialMessages];
-      }
+      finalKbForDisplay.currentPageHistory = [turnForInitialMessages];
+      finalKbForDisplay.playerStats = calculateEffectiveStats(finalKbForDisplay.playerStats, finalKbForDisplay.equippedItems, finalKbForDisplay.inventory);
+
       
       const newMessages: GameMessage[] = [];
       newMessages.push({
@@ -157,26 +172,27 @@ export const useGameActions = ({
       }
       newMessages.push(...systemMessagesFromInitialTags.map(m => ({...m, turnNumber: turnForInitialMessages })));
       
-      addMessageAndUpdateState(newMessages, finalKbForSetup, () => {
-           setCurrentScreen(GameScreen.Gameplay);
-           setIsLoadingApi(false);
-      });
+      addMessageAndUpdateState(newMessages, finalKbForDisplay);
 
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       setApiError(errorMsg);
       showNotification(errorMsg, 'error');
       console.error(err);
-      setIsLoadingApi(false);
+    } finally {
+        setIsLoadingApi(false);
     }
   }, [
+    setKnowledgeBase,
+    setCurrentPageDisplay,
+    setCurrentScreen,
     addMessageAndUpdateState, 
     logSentPromptCallback, 
-    setCurrentPageDisplay, 
-    setCurrentScreen, 
     setRawAiResponsesLog, 
     showNotification,
-    setKnowledgeBase, 
+    setApiError,
+    setIsLoadingApi,
+    logNpcAvatarPromptCallback, // Add to dependency array
   ]);
 
   const handlePlayerAction = useCallback(async (
@@ -201,7 +217,7 @@ export const useGameActions = ({
       turnNumber: turnOfPlayerAction
     };
     
-    const messagesForCurrentPagePrompt = getMessagesForPageUtil(currentPageDisplay, knowledgeBase, [...gameMessages, playerActionMessage]);
+    const messagesForCurrentPagePrompt = getMessagesForPage(currentPageDisplay, knowledgeBase, [...gameMessages, playerActionMessage]);
     let currentPageMessagesLog = messagesForCurrentPagePrompt
         .map(msg => {
             let prefix = "";
@@ -220,7 +236,7 @@ export const useGameActions = ({
     const lastPageNumberForPrompt = (knowledgeBase.currentPageHistory?.length || 1) -1;
     let lastNarrationFromPreviousPage: string | undefined = undefined;
     if (lastPageNumberForPrompt > 0 && currentPageDisplay > lastPageNumberForPrompt) { 
-        const messagesOfLastSummarizedPagePrompt = getMessagesForPageUtil(lastPageNumberForPrompt, knowledgeBase, gameMessages);
+        const messagesOfLastSummarizedPagePrompt = getMessagesForPage(lastPageNumberForPrompt, knowledgeBase, gameMessages);
         lastNarrationFromPreviousPage = [...messagesOfLastSummarizedPagePrompt].reverse().find(msg => msg.type === 'narration')?.content;
     }
 
@@ -245,7 +261,7 @@ export const useGameActions = ({
             systemMessagesFromTags, 
             realmChangedByTag, 
             removedBinhCanhViaTag 
-        } = performTagProcessing(currentTurnKb, response.tags, turnOfPlayerAction);
+        } = await performTagProcessing(currentTurnKb, response.tags, turnOfPlayerAction, setKnowledgeBase, logNpcAvatarPromptCallback); // Pass callback
         
         currentTurnKb = kbAfterTags;
         let manualTurnIncrementMessage: GameMessage | null = null;
@@ -267,6 +283,31 @@ export const useGameActions = ({
             currentTurnKb.playerStats.turn = turnOfPlayerAction + 1;
         }
         
+        const effectsToExpire: string[] = [];
+        if (currentTurnKb.playerStats.activeStatusEffects) {
+            currentTurnKb.playerStats.activeStatusEffects = currentTurnKb.playerStats.activeStatusEffects
+                .map(effect => {
+                    if (effect.durationTurns > 0) {
+                        effect.durationTurns -= 1;
+                        if (effect.durationTurns === 0) {
+                            effectsToExpire.push(effect.name);
+                        }
+                    }
+                    return effect;
+                })
+                .filter(effect => effect.durationTurns !== 0); 
+            
+            effectsToExpire.forEach(effectName => {
+                systemMessagesForThisTurn.push({
+                    id: `status-effect-expired-${effectName}-${Date.now()}`, type: 'system',
+                    content: VIETNAMESE.statusEffectRemoved(effectName),
+                    timestamp: Date.now(), turnNumber: currentTurnKb.playerStats.turn 
+                });
+            });
+        }
+        currentTurnKb.playerStats = calculateEffectiveStats(currentTurnKb.playerStats, currentTurnKb.equippedItems, currentTurnKb.inventory);
+
+
         const realmStringToParseForBottleneck = currentTurnKb.playerStats.realm;
         let mainRealmForBottleneck = "";
         let subRealmForBottleneck = "";
@@ -291,7 +332,7 @@ export const useGameActions = ({
             systemMessagesForThisTurn.push({
                 id: 'binh-canh-applied-client-' + Date.now(), type: 'system',
                 content: `Bạn đã đạt đến ${currentTurnKb.playerStats.realm}! ${VIETNAMESE.bottleneckNotification}`,
-                timestamp: Date.now(), turnNumber: turnOfPlayerAction
+                timestamp: Date.now(), turnNumber: currentTurnKb.playerStats.turn 
             });
         }
         
@@ -327,7 +368,7 @@ export const useGameActions = ({
                 systemMessagesForThisTurn.push({ 
                     id: 'level-up-parse-error-' + Date.now(), type: 'system',
                     content: `Lỗi hệ thống: Không thể phân tích cảnh giới "${realmBeforeThisSubLevelUp}" để lên cấp.`,
-                    timestamp: Date.now(), turnNumber: turnOfPlayerAction
+                    timestamp: Date.now(), turnNumber: currentTurnKb.playerStats.turn
                 });
                 break;
             }
@@ -341,7 +382,7 @@ export const useGameActions = ({
                 systemMessagesForThisTurn.push({ 
                     id: 'level-up-component-error-' + Date.now(), type: 'system',
                     content: `Lỗi hệ thống: Thành phần cảnh giới không hợp lệ khi lên cấp từ "${realmBeforeThisSubLevelUp}".`,
-                    timestamp: Date.now(), turnNumber: turnOfPlayerAction
+                    timestamp: Date.now(), turnNumber: currentTurnKb.playerStats.turn
                 });
                 break; 
             }
@@ -365,7 +406,7 @@ export const useGameActions = ({
             const tempCurrentHP = currentTurnKb.playerStats.sinhLuc;
             const tempCurrentMP = currentTurnKb.playerStats.linhLuc;
 
-            const newStatsForThisLevel = calculateStatsForRealm(
+            const newStatsForThisLevel = calculateRealmBaseStats(
                 currentTurnKb.playerStats.realm,
                 currentTurnKb.realmProgressionList,
                 currentTurnKb.currentRealmBaseStats
@@ -394,7 +435,7 @@ export const useGameActions = ({
             systemMessagesForThisTurn.push({
                 id: 'breakthrough-notify-xp-' + Date.now(), type: 'system',
                 content: `Chúc mừng ${currentTurnKb.worldConfig?.playerName || 'bạn'} đã đột phá thành công từ ${realmAtStartOfXPLoop} lên ${realmAfterXPLoop}!`,
-                timestamp: Date.now(), turnNumber: turnOfPlayerAction
+                timestamp: Date.now(), turnNumber: currentTurnKb.playerStats.turn
             });
             const finalOldMainName = realmAtStartOfXPLoop.substring(0, realmAtStartOfXPLoop.lastIndexOf(" ") > -1 ? realmAtStartOfXPLoop.lastIndexOf(" ") : undefined);
             const finalNewMainName = realmAfterXPLoop.substring(0, realmAfterXPLoop.lastIndexOf(" ") > -1 ? realmAfterXPLoop.lastIndexOf(" ") : undefined);
@@ -402,7 +443,7 @@ export const useGameActions = ({
                 systemMessagesForThisTurn.push({
                     id: 'realm-breakthrough-heal-final-' + Date.now(), type: 'system',
                     content: `Đột phá đại cảnh giới, sinh lực và linh lực hoàn toàn hồi phục!`,
-                    timestamp: Date.now(), turnNumber: turnOfPlayerAction
+                    timestamp: Date.now(), turnNumber: currentTurnKb.playerStats.turn
                 });
             }
         }
@@ -420,6 +461,8 @@ export const useGameActions = ({
         if (currentTurnKb.playerStats.hieuUngBinhCanh) {
            currentTurnKb.playerStats.kinhNghiem = Math.min(currentTurnKb.playerStats.kinhNghiem, Math.max(0, currentTurnKb.playerStats.maxKinhNghiem -1) );
         }
+        currentTurnKb.playerStats = calculateEffectiveStats(currentTurnKb.playerStats, currentTurnKb.equippedItems, currentTurnKb.inventory);
+
 
         currentTurnKb = addTurnHistoryEntry(currentTurnKb, gameMessagesBeforePlayerAction);
 
@@ -435,7 +478,7 @@ export const useGameActions = ({
             executeSaveGame(kbForAutoSave, messagesForAutoSave, autoSaveName, existingAutoSaveId, true)
                 .then(savedId => {
                     if (savedId) {
-                        setKnowledgeBase(prevKb => {
+                        setKnowledgeBase(prevKb => { // Use the direct setter here for autosave ID updates
                             const newKbWithAutoSaveId = JSON.parse(JSON.stringify(prevKb));
                             newKbWithAutoSaveId.autoSaveSlotIds[autoSaveSlot] = savedId;
                             newKbWithAutoSaveId.currentAutoSaveSlotIndex = (autoSaveSlot + 1) % MAX_AUTO_SAVE_SLOTS;
@@ -448,21 +491,24 @@ export const useGameActions = ({
         const newMessagesForThisCycle: GameMessage[] = [playerActionMessage];
         newMessagesForThisCycle.push({
             id: Date.now().toString() + Math.random(), type: 'narration', content: response.narration,
-            timestamp: Date.now(), choices: response.choices, turnNumber: turnOfPlayerAction
+            timestamp: Date.now(), choices: response.choices, turnNumber: currentTurnKb.playerStats.turn -1 
         });
         if (response.systemMessage) {
           newMessagesForThisCycle.push({
             id: Date.now().toString() + Math.random(), type: 'system', content: response.systemMessage,
-            timestamp: Date.now(), turnNumber: turnOfPlayerAction
+            timestamp: Date.now(), turnNumber: currentTurnKb.playerStats.turn -1
           });
         }
+        systemMessagesForThisTurn.forEach(msg => msg.turnNumber = currentTurnKb.playerStats.turn -1);
         newMessagesForThisCycle.push(...systemMessagesForThisTurn); 
+
         if (manualTurnIncrementMessage && !turnIncrementedByTag) { 
+            manualTurnIncrementMessage.turnNumber = currentTurnKb.playerStats.turn -1;
             newMessagesForThisCycle.push(manualTurnIncrementMessage);
         }
         
         const finalKbStateForThisTurn = currentTurnKb; 
-        const turnCompleted = turnOfPlayerAction;
+        const turnCompleted = finalKbStateForThisTurn.playerStats.turn - 1; 
         const shouldSummarizeAndPaginateNow = 
             turnCompleted > 0 &&
             turnCompleted % TURNS_PER_PAGE === 0 &&
@@ -490,6 +536,8 @@ export const useGameActions = ({
                             actualMessagesToSummarize,
                             finalKbStateForThisTurn.worldConfig?.theme || "Không rõ",
                             finalKbStateForThisTurn.worldConfig?.playerName || "Người chơi",
+                            finalKbStateForThisTurn.worldConfig?.genre,
+                            finalKbStateForThisTurn.worldConfig?.customGenreName,
                             logSentPromptCallback,
                             logSummarizationResponseCallback
                         );
@@ -531,67 +579,57 @@ export const useGameActions = ({
                              setIsSummarizingNextPageTransition(false);
                              setIsLoadingApi(false);
                         });
-                        return; 
+                        return;
                     }
                 } else { 
-                     if (!finalKbStateForThisTurn.pageSummaries) finalKbStateForThisTurn.pageSummaries = {};
-                     finalKbStateForThisTurn.pageSummaries[pageToSummarize] = VIETNAMESE.noContentToSummarize || "Không có nội dung.";
-                     finalKbStateForThisTurn.lastSummarizedTurn = turnCompleted;
-                     const nextPageStartTurn = turnCompleted + 1;
-                     if (!finalKbStateForThisTurn.currentPageHistory) finalKbStateForThisTurn.currentPageHistory = [1];
-                     if (!finalKbStateForThisTurn.currentPageHistory.includes(nextPageStartTurn)) {
+                    if (!finalKbStateForThisTurn.pageSummaries) finalKbStateForThisTurn.pageSummaries = {};
+                    finalKbStateForThisTurn.pageSummaries[pageToSummarize] = VIETNAMESE.noContentToSummarize;
+                    finalKbStateForThisTurn.lastSummarizedTurn = turnCompleted;
+                    const nextPageStartTurn = turnCompleted + 1;
+                    if (!finalKbStateForThisTurn.currentPageHistory) finalKbStateForThisTurn.currentPageHistory = [1];
+                    if (!finalKbStateForThisTurn.currentPageHistory.includes(nextPageStartTurn)) {
                         finalKbStateForThisTurn.currentPageHistory.push(nextPageStartTurn);
-                     }
+                    }
                      newMessagesForThisCycle.push({
-                        id: 'no-content-summary-' + Date.now(), type: 'page_summary',
-                        content: `${VIETNAMESE.pageSummaryTitle(pageToSummarize)}: ${VIETNAMESE.noContentToSummarize || "Không có nội dung."}`,
+                        id: 'page-summary-empty-' + Date.now(), type: 'page_summary',
+                        content: `${VIETNAMESE.pageSummaryTitle(pageToSummarize)}: ${VIETNAMESE.noContentToSummarize}`,
                         timestamp: Date.now(), turnNumber: turnCompleted
-                     });
-                     addMessageAndUpdateState(newMessagesForThisCycle, finalKbStateForThisTurn, () => {
+                    });
+                    addMessageAndUpdateState(newMessagesForThisCycle, finalKbStateForThisTurn, () => {
                         setCurrentPageDisplay(pageToSummarize + 1);
                         setIsSummarizingNextPageTransition(false);
                         setIsLoadingApi(false);
                     });
-                    return; 
+                    return;
                 }
             }
         }
-        addMessageAndUpdateState(newMessagesForThisCycle, finalKbStateForThisTurn, () => {
-             setIsLoadingApi(false);
-        });
+
+        addMessageAndUpdateState(newMessagesForThisCycle, finalKbStateForThisTurn);
 
     } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         setApiError(errorMsg);
         showNotification(errorMsg, 'error');
         console.error(err);
-        setIsLoadingApi(false); 
         if (isAutoPlaying) {
-          setIsAutoPlaying(false);
-          showNotification(VIETNAMESE.autoPlayStoppedOnError || "Đã dừng tự động chơi do có lỗi.", 'error');
+            setIsAutoPlaying(false); 
+            showNotification(VIETNAMESE.autoPlayStoppedOnError, 'warning');
         }
+    } finally {
+        setIsLoadingApi(false);
     }
   }, [
-      knowledgeBase, 
-      gameMessages, 
-      addMessageAndUpdateState, 
-      logSentPromptCallback,
-      logSummarizationResponseCallback, 
-      currentPageDisplay,
-      isAutoPlaying,
-      setIsAutoPlaying,
-      showNotification,
-      executeSaveGame, 
-      storageType,
-      firebaseUser,
-      setCurrentPageDisplay,
-      setKnowledgeBase, 
-      setRawAiResponsesLog,
+      knowledgeBase, gameMessages, currentPageDisplay, addMessageAndUpdateState, setKnowledgeBase,
+      logSentPromptCallback, setRawAiResponsesLog, setApiError, showNotification,
+      setCurrentPageDisplay, isAutoPlaying, setIsAutoPlaying, executeSaveGame, storageType, firebaseUser,
+      setSummarizationResponsesLog, setIsLoadingApi, logNpcAvatarPromptCallback, // Add to dependency array
     ]);
-
+    
   return {
     isLoadingApi,
-    apiError,
+    setIsLoadingApi, 
+    apiError, 
     setApiError, 
     isSummarizingNextPageTransition,
     handleSetupComplete,

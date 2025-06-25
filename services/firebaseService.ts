@@ -1,5 +1,6 @@
 
-import { initializeApp, FirebaseApp, deleteApp } from 'firebase/app';
+import { initializeApp, deleteApp } from 'firebase/app';
+import type { FirebaseApp } from 'firebase/app'; // Use type import
 import { 
   getAuth, 
   Auth, 

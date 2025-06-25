@@ -1,19 +1,24 @@
 
 import React, { useState, useRef, useEffect, ChangeEvent, useCallback } from 'react';
-import { KnowledgeBase, GameMessage, AiChoice, PlayerStats, Item, Skill, Quest, NPC, GameLocation, WorldLoreEntry, Companion, QuestObjective, FirebaseUser, PlayerActionInputType, ResponseLength, StorageType, StyleSettings, StyleSettingProperty } from '../../types';
+import { KnowledgeBase, GameMessage, AiChoice, PlayerStats, Item, Skill, Quest, NPC, GameLocation, WorldLoreEntry, Companion, QuestObjective, FirebaseUser, PlayerActionInputType, ResponseLength, StorageType, StyleSettings, StyleSettingProperty, Faction, GameScreen, StatusEffect } from './../types';
 import Button from './ui/Button'; // Ensured relative path
 import Spinner from './ui/Spinner';
-import Modal from './ui/Modal';
+import Modal from './ui/Modal'; // Corrected import path
 import KeywordSpan from './ui/KeywordSpan';
 import MiniInfoPopover from './ui/MiniInfoPopover';
 import StyleSettingsModal from './StyleSettingsModal';
-import OffCanvasPanel from './ui/OffCanvasPanel'; 
+import OffCanvasPanel from './ui/OffCanvasPanel';
+// Refactored imports for GameplayScreen layout
+import GameHeader from './gameplay/layout/GameHeader';
+import StoryLog from './gameplay/layout/StoryLog';
+import PlayerInputArea from './gameplay/layout/PlayerInputArea';
+
 import CharacterSidePanel from './gameplay/CharacterSidePanel';
 import QuestsSidePanel from './gameplay/QuestsSidePanel';
 import WorldSidePanel from './gameplay/WorldSidePanel';
 import DebugPanelDisplay from './gameplay/DebugPanelDisplay';
 import PaginationControls from './gameplay/PaginationControls';
-import { VIETNAMESE, DEFAULT_STYLE_SETTINGS } from './../constants';
+import { VIETNAMESE, DEFAULT_STYLE_SETTINGS, FEMALE_AVATAR_BASE_URL, MALE_AVATAR_PLACEHOLDER_URL, MAX_FEMALE_AVATAR_INDEX } from './../constants';
 import * as GameTemplates from './../templates';
 
 // --- Define GameplayScreenProps interface ---
@@ -25,8 +30,11 @@ interface GameplayScreenProps {
   onQuit: () => void;
   rawAiResponsesLog: string[];
   sentPromptsLog: string[];
-  latestPromptTokenCount: number | null | string; 
-  summarizationResponsesLog: string[]; // Added for summary responses
+  latestPromptTokenCount: number | null | string;
+  summarizationResponsesLog: string[];
+  sentCraftingPromptsLog: string[]; 
+  receivedCraftingResponsesLog: string[]; 
+  sentNpcAvatarPromptsLog: string[]; // New
   firebaseUser: FirebaseUser | null;
   onSaveGame: () => Promise<void>;
   isSavingGame: boolean;
@@ -49,6 +57,7 @@ interface GameplayScreenProps {
   onStartEditMessage: (messageId: string) => void;
   onSaveEditedMessage: (messageId: string, newContent: string) => void;
   onCancelEditMessage: () => void;
+  setCurrentScreen: (screen: GameScreen) => void;
 }
 
 // --- Helper function to escape regex characters ---
@@ -59,14 +68,17 @@ const escapeRegExp = (string: string): string => {
 // --- Main Gameplay Screen Component ---
 const GameplayScreen: React.FC<GameplayScreenProps> = ({
     knowledgeBase,
-    gameMessages, 
+    gameMessages,
     isLoading,
     onPlayerAction,
     onQuit,
     rawAiResponsesLog,
     sentPromptsLog,
     latestPromptTokenCount,
-    summarizationResponsesLog, 
+    summarizationResponsesLog,
+    sentCraftingPromptsLog,
+    receivedCraftingResponsesLog,
+    sentNpcAvatarPromptsLog, // Destructure new prop
     firebaseUser,
     onSaveGame,
     isSavingGame,
@@ -89,16 +101,16 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
     onStartEditMessage,
     onSaveEditedMessage,
     onCancelEditMessage,
+    setCurrentScreen,
 }) => {
   const [playerInput, setPlayerInput] = useState('');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const [isCharPanelOpen, setIsCharPanelOpen] = useState(false);
   const [isQuestsPanelOpen, setIsQuestsPanelOpen] = useState(false);
   const [isWorldPanelOpen, setIsWorldPanelOpen] = useState(false);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [isStyleSettingsModalOpen, setIsStyleSettingsModalOpen] = useState(false);
-  const [showAiSuggestions, setShowAiSuggestions] = useState(true); 
+  const [showAiSuggestions, setShowAiSuggestions] = useState(true);
 
   // Store IDs for selected entities to ensure data freshness from knowledgeBase
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
@@ -108,15 +120,16 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
   const [selectedLoreId, setSelectedLoreId] = useState<string | null>(null);
   const [selectedCompanionId, setSelectedCompanionId] = useState<string | null>(null);
+  const [selectedFactionId, setSelectedFactionId] = useState<string | null>(null);
 
 
   const [currentActionType, setCurrentActionType] = useState<PlayerActionInputType>('action');
   const [isActionTypeDropdownOpen, setIsActionTypeDropdownOpen] = useState(false);
-  const actionTypeDropdownRef = useRef<HTMLDivElement>(null);
+  const actionTypeDropdownRef = useRef<HTMLDivElement | null>(null);
 
   const [selectedResponseLength, setSelectedResponseLength] = useState<ResponseLength>('default');
   const [isResponseLengthDropdownOpen, setIsResponseLengthDropdownOpen] = useState(false);
-  const responseLengthDropdownRef = useRef<HTMLDivElement>(null);
+  const responseLengthDropdownRef = useRef<HTMLDivElement | null>(null);
 
   const [currentEditText, setCurrentEditText] = useState('');
 
@@ -124,18 +137,12 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
   const [miniInfoPopover, setMiniInfoPopover] = useState<{
     isOpen: boolean;
     targetRect: DOMRect | null;
-    entity: Item | Skill | Quest | NPC | GameLocation | WorldLoreEntry | Companion | null;
-    entityType: 'item' | 'skill' | 'quest' | 'npc' | 'location' | 'lore' | 'companion' | null;
+    entity: Item | Skill | Quest | NPC | GameLocation | WorldLoreEntry | Companion | Faction | null;
+    entityType: 'item' | 'skill' | 'quest' | 'npc' | 'location' | 'lore' | 'companion' | 'faction' | null;
   }>({ isOpen: false, targetRect: null, entity: null, entityType: null });
 
   const displayedMessages = getMessagesForPage(currentPageDisplay);
 
-  useEffect(() => {
-    if (currentPageDisplay === totalPages) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [gameMessages.length, currentPageDisplay, totalPages]);
-  
   useEffect(() => {
     setIsCharPanelOpen(false);
     setIsQuestsPanelOpen(false);
@@ -156,9 +163,8 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
         setIsActionTypeDropdownOpen(false);
         setIsResponseLengthDropdownOpen(false);
         setIsStyleSettingsModalOpen(false);
-        if (messageIdBeingEdited) { 
+        if (messageIdBeingEdited) {
           onCancelEditMessage();
-          setCurrentEditText('');
         }
       }
     };
@@ -173,39 +179,21 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
     };
   }, [isActionTypeDropdownOpen, isResponseLengthDropdownOpen, isStyleSettingsModalOpen, messageIdBeingEdited, onCancelEditMessage]);
 
-  const handleInputChange = (e: ChangeEvent<HTMLInputElement>) => {
-    setPlayerInput(e.target.value);
-  };
+  useEffect(() => {
+    if (messageIdBeingEdited) {
+      const msgToEdit = displayedMessages.find(m => m.id === messageIdBeingEdited) || gameMessages.find(m => m.id === messageIdBeingEdited);
+      if (msgToEdit) {
+        setCurrentEditText(msgToEdit.content);
+      }
+    } else {
+      setCurrentEditText('');
+    }
+  }, [messageIdBeingEdited, displayedMessages, gameMessages]);
 
-  const selectActionType = (type: PlayerActionInputType) => {
-    setCurrentActionType(type);
-    setIsActionTypeDropdownOpen(false);
-  };
-
-  const selectResponseLength = (length: ResponseLength) => {
-    setSelectedResponseLength(length);
-    setIsResponseLengthDropdownOpen(false);
-  };
 
   const getResponseLengthButtonLabel = (): string => {
     const baseText = VIETNAMESE.responseLengthButtonText(selectedResponseLength);
-    return baseText; 
-  };
-
-
-  const handleSubmitAction = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (playerInput.trim() && !isLoading && !isSummarizing && isCurrentlyActivePage) {
-      onPlayerAction(playerInput.trim(), false, currentActionType, selectedResponseLength);
-      setPlayerInput('');
-    }
-  };
-
-  const handleChoiceClick = (choiceText: string) => {
-    if (!isLoading && !isSummarizing && isCurrentlyActivePage) {
-      onPlayerAction(choiceText, true, 'action', selectedResponseLength);
-       setPlayerInput('');
-    }
+    return baseText;
   };
 
   const getLatestChoicesSource = useCallback(() => {
@@ -231,6 +219,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
     setSelectedLocationId(null);
     setSelectedLoreId(null);
     setSelectedCompanionId(null);
+    setSelectedFactionId(null);
   };
 
   // Retrieve full entity objects from knowledgeBase using stored IDs for modals
@@ -241,12 +230,13 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
   const selectedLocation = knowledgeBase.discoveredLocations.find(l => l.id === selectedLocationId);
   const selectedLore = knowledgeBase.worldLore.find(l => l.id === selectedLoreId);
   const selectedCompanion = knowledgeBase.companions.find(c => c.id === selectedCompanionId);
+  const selectedFaction = knowledgeBase.discoveredFactions.find(f => f.id === selectedFactionId);
 
 
   const handleKeywordClick = useCallback((
     event: React.MouseEvent<HTMLSpanElement>,
-    entity: Item | Skill | Quest | NPC | GameLocation | WorldLoreEntry | Companion,
-    entityType: 'item' | 'skill' | 'quest' | 'npc' | 'location' | 'lore' | 'companion'
+    entity: Item | Skill | Quest | NPC | GameLocation | WorldLoreEntry | Companion | Faction,
+    entityType: 'item' | 'skill' | 'quest' | 'npc' | 'location' | 'lore' | 'companion' | 'faction'
   ) => {
     const target = event.currentTarget as HTMLElement;
     if (miniInfoPopover.isOpen && miniInfoPopover.entity === entity) {
@@ -271,19 +261,20 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
     return style;
   }, [styleSettings.keywordHighlight]);
 
-  const parseAndHighlightText = useCallback((text: string, kb: KnowledgeBase): React.ReactNode[] => {
-    if (!text) return [text];
+  const parseAndHighlightText = useCallback((textInput: string, kb: KnowledgeBase): React.ReactNode[] => {
+    const text = textInput ? String(textInput) : ""; 
+    if (!text) return [""]; 
 
     const allKeywords: Array<{
         name: string;
-        type: 'item' | 'skill' | 'quest' | 'npc' | 'location' | 'lore' | 'companion';
+        type: 'item' | 'skill' | 'quest' | 'npc' | 'location' | 'lore' | 'companion' | 'faction';
         entity: any;
     }> = [];
 
     const addKeywords = (source: any[], nameKey: string, type: any) => {
         source.forEach(e => {
             const name = e[nameKey];
-            if (typeof name === 'string' && name.trim().length > 2) { 
+            if (typeof name === 'string' && name.trim().length > 2) {
                 allKeywords.push({ name: name.trim(), type, entity: e });
             }
         });
@@ -296,10 +287,12 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
     addKeywords(kb.discoveredLocations, 'name', 'location');
     addKeywords(kb.worldLore, 'title', 'lore');
     addKeywords(kb.companions, 'name', 'companion');
+    addKeywords(kb.discoveredFactions, 'name', 'faction');
+
 
     if (allKeywords.length === 0) return [text];
 
-    allKeywords.sort((a, b) => b.name.length - a.name.length); 
+    allKeywords.sort((a, b) => b.name.length - a.name.length);
 
     const keywordMap = new Map<string, { type: any, entity: any }>();
     allKeywords.forEach(kw => {
@@ -307,12 +300,12 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
           keywordMap.set(kw.name.toLowerCase(), { type: kw.type, entity: kw.entity });
       }
     });
-    
+
     const uniqueNamesForRegex = Array.from(new Set(allKeywords.map(kw => escapeRegExp(kw.name))));
     if (uniqueNamesForRegex.length === 0) return [text];
 
     const pattern = `\\b(${uniqueNamesForRegex.join('|')})\\b`;
-    const regex = new RegExp(pattern, 'gi'); 
+    const regex = new RegExp(pattern, 'gi');
 
     const resultNodes: React.ReactNode[] = [];
     let lastIndex = 0;
@@ -320,18 +313,18 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
     const highlightStyle = getKeywordHighlightStyle();
 
     while ((match = regex.exec(text)) !== null) {
-        const keywordText = match[0]; 
-        const keywordInfo = keywordMap.get(keywordText.toLowerCase()); 
+        const keywordText = match[0];
+        const keywordInfo = keywordMap.get(keywordText.toLowerCase());
 
         if (match.index > lastIndex) {
-            resultNodes.push(text.substring(lastIndex, match.index));
+            resultNodes.push(text.substring(lastIndex, match.index)); 
         }
 
         if (keywordInfo) {
             resultNodes.push(
                 <KeywordSpan
                     key={`${keywordInfo.type}-${(keywordInfo.entity as any).id || keywordInfo.entity.name || keywordInfo.entity.title}-${match.index}`}
-                    keyword={keywordText} 
+                    keyword={keywordText}
                     entityType={keywordInfo.type}
                     entity={keywordInfo.entity}
                     onClick={handleKeywordClick}
@@ -370,7 +363,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
     if (setting) {
       if (setting.fontFamily && setting.fontFamily !== 'inherit') styles.fontFamily = setting.fontFamily;
       if (setting.fontSize && setting.fontSize !== 'inherit') styles.fontSize = setting.fontSize;
-      if (setting.textColor) styles.color = setting.textColor;
+      if (setting.textColor) styles.color = setting.textColor; 
       if (setting.backgroundColor && setting.backgroundColor !== 'transparent') styles.backgroundColor = setting.backgroundColor;
     }
     return styles;
@@ -382,7 +375,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
     if (setting) {
       if (setting.fontFamily && setting.fontFamily !== 'inherit') styles.fontFamily = setting.fontFamily;
       if (setting.fontSize && setting.fontSize !== 'inherit') styles.fontSize = setting.fontSize;
-      if (setting.textColor) styles.color = setting.textColor;
+      if (setting.textColor) styles.color = setting.textColor; 
       if (setting.backgroundColor && setting.backgroundColor !== 'transparent') {
         styles.backgroundColor = setting.backgroundColor;
       } else if (setting.backgroundColor === 'transparent') {
@@ -392,315 +385,129 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
     return styles;
   };
 
-  const handleStartEditInternal = (msg: GameMessage) => {
-    onStartEditMessage(msg.id);
-    setCurrentEditText(msg.content);
-  };
 
   const handleSaveEditInternal = (messageId: string) => {
     onSaveEditedMessage(messageId, currentEditText);
-    setCurrentEditText('');
-  };
-
-  const handleCancelEditInternal = () => {
-    onCancelEditMessage();
-    setCurrentEditText('');
   };
 
   const gameTitleDisplay = knowledgeBase.manualSaveName || knowledgeBase.worldConfig?.saveGameName || knowledgeBase.worldConfig?.theme || "Role Play AI";
 
+  const renderStatBonuses = (bonuses: Partial<PlayerStats>) => {
+    const relevantBonuses = Object.entries(bonuses).filter(
+        (entry): entry is [string, number] => { 
+            const [key, value] = entry;
+            return !key.startsWith('base') &&
+                typeof value === 'number' &&
+                value !== 0;
+        }
+    );
+
+    if (relevantBonuses.length === 0) return <p className="text-xs text-gray-400">Không có chỉ số cộng thêm.</p>;
+
+    const statLabels: Record<string, string> = {
+        sinhLuc: "Sinh Lực Hiện Tại", maxSinhLuc: "Sinh Lực Tối Đa",
+        linhLuc: "Linh Lực Hiện Tại", maxLinhLuc: "Linh Lực Tối Đa",
+        sucTanCong: "Sức Tấn Công",
+        kinhNghiem: "Kinh Nghiệm", maxKinhNghiem: "Kinh Nghiệm Tối Đa",
+    };
+
+    return (
+        <ul className="list-disc list-inside pl-4 text-xs">
+            {relevantBonuses.map(([key, value]) => ( 
+                <li key={key}>
+                    <span className="text-gray-300">{statLabels[key] || key}: </span>
+                    <span className={value > 0 ? "text-green-400" : "text-red-400"}>
+                        {value > 0 ? `+${value}` : value}
+                    </span>
+                </li>
+            ))}
+        </ul>
+    );
+  };
+  
+  const getSelectedNpcAvatarSrc = () => {
+    if (selectedNpc) {
+      if (selectedNpc.avatarUrl && (selectedNpc.avatarUrl.startsWith('http://') || selectedNpc.avatarUrl.startsWith('https://'))) {
+        return selectedNpc.avatarUrl; // Use stored Cloudinary/web URL
+      }
+      // Fallback to random/placeholder if no valid URL
+      if (selectedNpc.gender === 'Nữ') {
+        const randomIndex = Math.floor(Math.random() * MAX_FEMALE_AVATAR_INDEX) + 1;
+        return `${FEMALE_AVATAR_BASE_URL}${randomIndex}.png`;
+      }
+      return MALE_AVATAR_PLACEHOLDER_URL;
+    }
+    return MALE_AVATAR_PLACEHOLDER_URL; // Fallback if selectedNpc is null
+  };
+
 
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-gray-100 p-2 sm:p-4">
-      <header className="mb-2 sm:mb-4 flex flex-col sm:flex-row justify-between items-center flex-shrink-0 gap-2">
-        <h1 
-          className="text-xl sm:text-2xl md:text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-green-400 via-cyan-500 to-blue-600 truncate max-w-xs sm:max-w-sm md:max-w-md lg:max-w-lg xl:max-w-xl"
-          title={gameTitleDisplay}
-        >
-          {gameTitleDisplay}
-        </h1>
-        <div className="flex space-x-1 sm:space-x-2 flex-wrap gap-y-1 sm:gap-y-2 justify-center sm:justify-end">
-            <Button onClick={() => setIsCharPanelOpen(true)} variant={isCharPanelOpen ? "primary" : "secondary"} size="sm" aria-pressed={isCharPanelOpen} disabled={isSummarizing} className="px-2 sm:px-3">
-              <span className="sm:hidden">{VIETNAMESE.characterButtonShort}</span>
-              <span className="hidden sm:inline">{VIETNAMESE.characterButton}</span>
-            </Button>
-            <Button onClick={() => setIsWorldPanelOpen(true)} variant={isWorldPanelOpen ? "primary" : "secondary"} size="sm" aria-pressed={isWorldPanelOpen} disabled={isSummarizing} className="px-2 sm:px-3">
-              <span className="sm:hidden">{VIETNAMESE.worldButtonShort}</span>
-              <span className="hidden sm:inline">{VIETNAMESE.worldButton}</span>
-            </Button>
-            <Button onClick={() => setIsQuestsPanelOpen(true)} variant={isQuestsPanelOpen ? "primary" : "secondary"} size="sm" aria-pressed={isQuestsPanelOpen} disabled={isSummarizing} className="px-2 sm:px-3">
-              <span className="sm:hidden">{VIETNAMESE.questsButtonShort}</span>
-              <span className="hidden sm:inline">{VIETNAMESE.questsButton}</span>
-            </Button>
-            <Button
-              onClick={() => setIsStyleSettingsModalOpen(true)}
-              variant="secondary"
-              size="sm"
-              disabled={isSummarizing}
-              className="border-purple-500 text-purple-300 hover:bg-purple-700 hover:text-white px-2 sm:px-3"
-              title={VIETNAMESE.gameplaySettingsButton}
-            >
-             <span className="sm:hidden">⚙️</span><span className="hidden sm:inline">{VIETNAMESE.gameplaySettingsButtonShort || VIETNAMESE.gameplaySettingsButton}</span>
-            </Button>
-             <Button
-                onClick={onRollbackTurn}
-                variant="secondary"
-                size="sm"
-                disabled={isStopButtonDisabled}
-                title={isLoading ? "Dừng nhận phản hồi và lùi lượt" : (canRollbackStandard ? VIETNAMESE.rollbackTurn : VIETNAMESE.cannotRollbackFurther)}
-                className="border-amber-500 text-amber-300 hover:bg-amber-700 hover:text-white px-2 sm:px-3"
-            >
-                <span className="sm:hidden">⏪</span><span className="hidden sm:inline">{VIETNAMESE.stopButtonShort || VIETNAMESE.stopButton}</span>
-            </Button>
-            <Button
-                onClick={onSaveGame}
-                variant="primary"
-                size="sm"
-                disabled={isSaveDisabled}
-                isLoading={isSavingGame}
-                loadingText="Đang lưu..."
-                title={(storageType === 'cloud' && !firebaseUser) ? VIETNAMESE.signInRequiredForSave : VIETNAMESE.saveGameButton}
-                className="px-2 sm:px-3"
-            >
-                <span className="sm:hidden">💾</span><span className="hidden sm:inline">{VIETNAMESE.saveGameButtonShort || VIETNAMESE.saveGameButton}</span>
-            </Button>
-            <Button 
-                onClick={() => setShowDebugPanel(prev => !prev)} 
-                variant={showDebugPanel ? "primary" : "ghost"} 
-                size="sm" 
-                className="border-yellow-500 text-yellow-300 hover:bg-yellow-700 hover:text-white px-2 sm:px-3"
-                title="Debug Panel"
-            >
-                <span className="sm:hidden" aria-hidden="true">🐞</span>
-                <span className="hidden sm:inline">Debug</span>
-            </Button>
-            <Button onClick={onQuit} variant="danger" size="sm" disabled={isSummarizing} className="px-2 sm:px-3" title={VIETNAMESE.quitGameButtonTitle}>
-                 <span className="sm:hidden">🚪</span><span className="hidden sm:inline">{VIETNAMESE.quitGameButtonShort || VIETNAMESE.quitGameButton}</span>
-            </Button>
-        </div>
-      </header>
+      <GameHeader
+        gameTitleDisplay={gameTitleDisplay}
+        isCharPanelOpen={isCharPanelOpen}
+        isQuestsPanelOpen={isQuestsPanelOpen}
+        isWorldPanelOpen={isWorldPanelOpen}
+        setIsCharPanelOpen={setIsCharPanelOpen}
+        setIsQuestsPanelOpen={setIsQuestsPanelOpen}
+        setIsWorldPanelOpen={setIsWorldPanelOpen}
+        setCurrentScreen={setCurrentScreen}
+        onRollbackTurn={onRollbackTurn}
+        isStopButtonDisabled={isStopButtonDisabled}
+        isLoading={isLoading}
+        onSaveGame={onSaveGame}
+        isSaveDisabled={isSaveDisabled}
+        isSavingGame={isSavingGame}
+        showDebugPanel={showDebugPanel}
+        setShowDebugPanel={setShowDebugPanel}
+        onQuit={onQuit}
+        isSummarizing={isSummarizing}
+        setIsStyleSettingsModalOpen={setIsStyleSettingsModalOpen}
+      />
 
-      <div className="flex-grow flex flex-col gap-4 overflow-hidden"> 
+      <div className="flex-grow flex flex-col gap-4 overflow-hidden">
         <div className="flex-grow flex flex-col bg-gray-850 shadow-xl rounded-lg overflow-hidden">
-          <div id="story-log" className="flex-grow overflow-y-auto p-3 sm:p-4 bg-gray-800 rounded-t-lg custom-scrollbar">
-            {displayedMessages.map((msg) => {
-              const messageBaseClass = 'my-1 max-w-full p-2 sm:p-3 rounded-xl shadow text-sm sm:text-base relative'; 
-              let typeSpecificClass = '';
-              let dynamicStyle = getDynamicMessageStyles(msg.type);
-
-              const isEditable = (msg.type === 'narration' || msg.type === 'player_action') && isCurrentlyActivePage;
-
-              if (msg.type === 'narration') {
-                if (!dynamicStyle.backgroundColor) typeSpecificClass = 'bg-gray-700';
-                if (!dynamicStyle.color) typeSpecificClass += (typeSpecificClass ? ' ' : '') + 'text-gray-100';
-              } else if (msg.type === 'player_action') {
-                if (!dynamicStyle.backgroundColor) typeSpecificClass = 'bg-indigo-600';
-                if (!dynamicStyle.color) typeSpecificClass += (typeSpecificClass ? ' ' : '') + 'text-white';
-              } else if (msg.type === 'system') {
-                typeSpecificClass = 'bg-yellow-600 bg-opacity-30 text-yellow-200 border border-yellow-500 italic text-xs sm:text-sm';
-              } else if (msg.type === 'error') {
-                typeSpecificClass = 'bg-red-700 text-white';
-              } else if (msg.type === 'page_summary') {
-                typeSpecificClass = 'bg-purple-800 bg-opacity-50 text-purple-200 border border-purple-600 italic text-xs sm:text-sm mt-3 mb-2';
-              } else {
-                 typeSpecificClass = 'bg-gray-600 text-gray-200';
-              }
-
-              return (
-                <div key={msg.id} className={`flex ${msg.isPlayerInput ? 'justify-end' : 'justify-start'}`}>
-                  <div
-                    className={`${messageBaseClass} ${typeSpecificClass} ${messageIdBeingEdited === msg.id ? 'w-full' : ''}`}
-                    style={dynamicStyle}
-                  >
-                    {isEditable && messageIdBeingEdited !== msg.id && (
-                        <button
-                          onClick={() => handleStartEditInternal(msg)}
-                          className="absolute top-1 right-1 p-0.5 text-gray-400 hover:text-white bg-gray-700 hover:bg-gray-600 rounded-full transition-colors"
-                          aria-label={VIETNAMESE.editButtonLabel}
-                          title={VIETNAMESE.editButtonLabel}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3 h-3">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
-                          </svg>
-                        </button>
-                      )}
-                    {messageIdBeingEdited === msg.id ? (
-                      <div className="mt-1"> 
-                        <textarea
-                          value={currentEditText}
-                          onChange={(e) => setCurrentEditText(e.target.value)}
-                          className="w-full p-2 text-sm bg-gray-600 border border-gray-500 rounded-md focus:ring-1 focus:ring-indigo-400 focus:border-indigo-400 text-gray-100 placeholder-gray-400 min-h-[80px]" // Adjusted min-height for edit
-                          rows={Math.max(3, currentEditText.split('\n').length)}
-                        />
-                        <div className="flex justify-end space-x-2 mt-2">
-                          <Button size="sm" variant="ghost" onClick={handleCancelEditInternal}>{VIETNAMESE.cancelEditButton}</Button>
-                          <Button size="sm" variant="primary" onClick={() => handleSaveEditInternal(msg.id)}>{VIETNAMESE.saveEditButton}</Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <p className="whitespace-pre-wrap leading-relaxed">
-                        {parseAndHighlightText(msg.content, knowledgeBase)}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-            {(isLoading && displayedMessages.length === 0 && knowledgeBase.playerStats.turn === 0) && <Spinner text={VIETNAMESE.contactingAI} size="sm" className="my-4" />}
-
-            {(isLoading && !isSummarizing && isCurrentlyActivePage && displayedMessages.length > 0) && (
-              <div className="text-center text-gray-400 italic py-2 mt-2 text-xs sm:text-sm">
-                {VIETNAMESE.contactingAI}
-              </div>
-            )}
-            {isSummarizing && (
-                 <div className="text-center text-gray-400 italic py-2 mt-2">
-                     <Spinner
-                        text={
-                            displayedMessages.some(m => m.content.includes(VIETNAMESE.creatingMissingSummary))
-                            ? VIETNAMESE.creatingMissingSummary
-                            : VIETNAMESE.summarizingAndPreparingNextPage
-                        }
-                        size="sm" />
-                 </div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-
-          <div className="bg-gray-800 p-2 sm:p-3 border-t border-gray-700 flex-shrink-0">
-            {latestMessageWithChoices?.choices && latestMessageWithChoices.choices.length > 0 && isCurrentlyActivePage && !isSummarizing && (
-              <div className="mb-2">
-                <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="w-full text-left justify-start py-1.5 px-2 text-xs text-indigo-300 hover:text-indigo-200 mb-1"
-                    onClick={() => setShowAiSuggestions(prev => !prev)}
-                >
-                    {showAiSuggestions ? VIETNAMESE.hideAiSuggestionsButton : VIETNAMESE.showAiSuggestionsButton}
-                </Button>
-                {showAiSuggestions && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 sm:gap-2">
-                    {latestMessageWithChoices.choices.map((choice, index) => (
-                      <Button
-                        key={index}
-                        variant="ghost"
-                        className="w-full text-left justify-start py-1.5 px-2 sm:py-2 sm:px-3 text-xs sm:text-sm whitespace-normal" 
-                        customStyles={getChoiceButtonStyles()}
-                        onClick={() => handleChoiceClick(choice.text)}
-                        disabled={isLoading || isSummarizing || !isCurrentlyActivePage || !!messageIdBeingEdited}
-                        title={choice.text} 
-                      >
-                        {index + 1}. {choice.text}
-                      </Button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            <form onSubmit={handleSubmitAction} className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center mt-2">
-              <div className="flex gap-2 w-full sm:w-auto">
-                <div className="relative flex-shrink-0 flex-grow sm:flex-grow-0" ref={responseLengthDropdownRef}>
-                  <Button
-                    type="button"
-                    variant="primary"
-                    size="sm" 
-                    onClick={() => setIsResponseLengthDropdownOpen(!isResponseLengthDropdownOpen)}
-                    className="px-2 w-full sm:min-w-[120px] md:min-w-[140px] flex items-center justify-between"
-                    aria-haspopup="true"
-                    aria-expanded={isResponseLengthDropdownOpen}
-                    disabled={isLoading || isSummarizing || !isCurrentlyActivePage || !!messageIdBeingEdited}
-                  >
-                    <span className="truncate text-xs sm:text-sm">{getResponseLengthButtonLabel()}</span>
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`w-4 h-4 sm:w-5 sm:h-5 ml-1 transition-transform duration-200 ${isResponseLengthDropdownOpen ? 'transform rotate-180' : ''}`}>
-                      <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
-                    </svg>
-                  </Button>
-                  {isResponseLengthDropdownOpen && (
-                    <div className="absolute bottom-full mb-1 w-full bg-gray-700 border border-gray-600 rounded-md shadow-lg z-10">
-                      {(['default', 'short', 'medium', 'long'] as ResponseLength[]).map(length => (
-                        <button
-                          key={length}
-                          type="button"
-                          onClick={() => selectResponseLength(length)}
-                          className={`block w-full text-left px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm hover:bg-indigo-500 ${selectedResponseLength === length ? 'bg-indigo-600 font-semibold' : 'text-gray-100'} first:rounded-t-md last:rounded-b-md`}
-                          role="menuitem"
-                        >
-                          {
-                            length === 'default' ? VIETNAMESE.responseLength_default :
-                            length === 'short' ? VIETNAMESE.responseLength_short :
-                            length === 'medium' ? VIETNAMESE.responseLength_medium :
-                            VIETNAMESE.responseLength_long
-                          }
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div className="relative flex-shrink-0 flex-grow sm:flex-grow-0" ref={actionTypeDropdownRef}>
-                  <Button
-                    type="button"
-                    variant="primary"
-                    size="sm" 
-                    onClick={() => setIsActionTypeDropdownOpen(!isActionTypeDropdownOpen)}
-                    className="px-2 w-full sm:min-w-[100px] md:min-w-[120px] flex items-center justify-between"
-                    aria-haspopup="true"
-                    aria-expanded={isActionTypeDropdownOpen}
-                    disabled={isLoading || isSummarizing || !isCurrentlyActivePage || !!messageIdBeingEdited}
-                  >
-                    <span className="truncate text-xs sm:text-sm">
-                      {currentActionType === 'action' ? VIETNAMESE.inputTypeActionLabel : VIETNAMESE.inputTypeStoryLabel}
-                    </span>
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`w-4 h-4 sm:w-5 sm:h-5 ml-1 transition-transform duration-200 ${isActionTypeDropdownOpen ? 'transform rotate-180' : ''}`}>
-                      <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
-                    </svg>
-                  </Button>
-                  {isActionTypeDropdownOpen && (
-                    <div className="absolute bottom-full mb-1 w-full bg-gray-700 border border-gray-600 rounded-md shadow-lg z-10">
-                      <button
-                        type="button"
-                        onClick={() => selectActionType('action')}
-                        className={`block w-full text-left px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm hover:bg-indigo-500 rounded-t-md ${currentActionType === 'action' ? 'bg-indigo-600 font-semibold' : 'text-gray-100'}`}
-                        role="menuitem"
-                      >
-                        {VIETNAMESE.inputTypeActionLabel}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => selectActionType('story')}
-                        className={`block w-full text-left px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm hover:bg-indigo-500 rounded-b-md ${currentActionType === 'story' ? 'bg-indigo-600 font-semibold' : 'text-gray-100'}`}
-                        role="menuitem"
-                      >
-                        {VIETNAMESE.inputTypeStoryLabel}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-              <input
-                type="text"
-                value={playerInput}
-                onChange={handleInputChange}
-                placeholder={!isCurrentlyActivePage ? "Chỉ có thể hành động ở trang hiện tại nhất." : VIETNAMESE.enterAction}
-                className="flex-grow p-2 sm:p-2.5 text-sm sm:text-base bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-100 placeholder-gray-400 transition-colors duration-150"
-                disabled={isLoading || isSummarizing || !isCurrentlyActivePage || !!messageIdBeingEdited}
-                title={!isCurrentlyActivePage ? "Bạn chỉ có thể hành động ở trang hiện tại nhất của cuộc phiêu lưu." : (isSummarizing ? VIETNAMESE.summarizingAndPreparingNextPage : (!!messageIdBeingEdited ? "Đang sửa diễn biến..." : undefined))}
-              />
-              <Button
-                type="submit"
-                variant="primary"
-                size="sm" 
-                className="px-3 sm:px-4 w-full sm:w-auto"
-                disabled={isLoading || isSummarizing || playerInput.trim() === "" || !isCurrentlyActivePage || !!messageIdBeingEdited}
-                isLoading={isLoading && playerInput.trim() !== "" && !isSummarizing && isCurrentlyActivePage && !messageIdBeingEdited}
-                loadingText={VIETNAMESE.sendingAction}
-              >
-                {VIETNAMESE.sendInputButton}
-              </Button>
-            </form>
-          </div>
+          <StoryLog
+            displayedMessages={displayedMessages}
+            isLoadingUi={isLoading}
+            isSummarizingUi={isSummarizing}
+            isCurrentlyActivePage={isCurrentlyActivePage}
+            knowledgeBase={knowledgeBase}
+            styleSettings={styleSettings}
+            messageIdBeingEdited={messageIdBeingEdited}
+            currentEditText={currentEditText}
+            setCurrentEditText={setCurrentEditText}
+            onStartEditMessage={onStartEditMessage} 
+            onSaveEditedMessage={handleSaveEditInternal} 
+            onCancelEditMessage={onCancelEditMessage} 
+            parseAndHighlightText={parseAndHighlightText}
+            getDynamicMessageStyles={getDynamicMessageStyles}
+            playerStatsTurn={knowledgeBase.playerStats.turn}
+          />
+          <PlayerInputArea
+            latestMessageWithChoices={latestMessageWithChoices}
+            showAiSuggestions={showAiSuggestions}
+            setShowAiSuggestions={setShowAiSuggestions}
+            playerInput={playerInput}
+            setPlayerInput={setPlayerInput}
+            currentActionType={currentActionType}
+            setCurrentActionType={setCurrentActionType}
+            isActionTypeDropdownOpen={isActionTypeDropdownOpen}
+            setIsActionTypeDropdownOpen={setIsActionTypeDropdownOpen}
+            actionTypeDropdownRef={actionTypeDropdownRef}
+            selectedResponseLength={selectedResponseLength}
+            setSelectedResponseLength={setSelectedResponseLength}
+            isResponseLengthDropdownOpen={isResponseLengthDropdownOpen}
+            setIsResponseLengthDropdownOpen={setIsResponseLengthDropdownOpen}
+            responseLengthDropdownRef={responseLengthDropdownRef}
+            isLoadingUi={isLoading}
+            isSummarizingUi={isSummarizing}
+            isCurrentlyActivePage={isCurrentlyActivePage}
+            messageIdBeingEdited={messageIdBeingEdited}
+            onPlayerAction={onPlayerAction}
+            getChoiceButtonStyles={getChoiceButtonStyles}
+            getResponseLengthButtonLabel={getResponseLengthButtonLabel}
+          />
           <PaginationControls
             currentPage={currentPageDisplay}
             totalPages={totalPages}
@@ -711,32 +518,33 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
           />
         </div>
       </div>
-      
+
       <OffCanvasPanel isOpen={isCharPanelOpen} onClose={() => setIsCharPanelOpen(false)} title={VIETNAMESE.characterPanelTitle} position="right">
           <CharacterSidePanel
             knowledgeBase={knowledgeBase}
-            onItemClick={(item) => { setSelectedItemId(item.id); setIsCharPanelOpen(false); }}
-            onSkillClick={(skill) => { setSelectedSkillId(skill.id); setIsCharPanelOpen(false); }}
+            onItemClick={(item) => { setSelectedItemId(item.id); }}
+            onSkillClick={(skill) => { setSelectedSkillId(skill.id); }}
           />
       </OffCanvasPanel>
       <OffCanvasPanel isOpen={isQuestsPanelOpen} onClose={() => setIsQuestsPanelOpen(false)} title={VIETNAMESE.questsPanelTitle} position="right">
         <QuestsSidePanel
             quests={knowledgeBase.allQuests}
-            onQuestClick={(quest) => { setSelectedQuestId(quest.id); setIsQuestsPanelOpen(false); }}
+            onQuestClick={(quest) => { setSelectedQuestId(quest.id); }}
           />
       </OffCanvasPanel>
       <OffCanvasPanel isOpen={isWorldPanelOpen} onClose={() => setIsWorldPanelOpen(false)} title={VIETNAMESE.worldPanelTitle} position="right">
         <WorldSidePanel
             knowledgeBase={knowledgeBase}
-            onNpcClick={(npc) => { setSelectedNpcId(npc.id); setIsWorldPanelOpen(false); }}
-            onLocationClick={(location) => { setSelectedLocationId(location.id); setIsWorldPanelOpen(false); }}
-            onLoreClick={(lore) => { setSelectedLoreId(lore.id); setIsWorldPanelOpen(false); }}
-            onCompanionClick={(companion) => { setSelectedCompanionId(companion.id); setIsWorldPanelOpen(false); }}
+            onNpcClick={(npc) => { setSelectedNpcId(npc.id); }}
+            onLocationClick={(location) => { setSelectedLocationId(location.id); }}
+            onLoreClick={(lore) => { setSelectedLoreId(lore.id); }}
+            onCompanionClick={(companion) => { setSelectedCompanionId(companion.id); }}
+            onFactionClick={(faction) => { setSelectedFactionId(faction.id); }}
           />
       </OffCanvasPanel>
 
       <Modal
-        isOpen={!!selectedItem || !!selectedSkill || !!selectedQuest || !!selectedNpc || !!selectedLocation || !!selectedLore || !!selectedCompanion}
+        isOpen={!!selectedItem || !!selectedSkill || !!selectedQuest || !!selectedNpc || !!selectedLocation || !!selectedLore || !!selectedCompanion || !!selectedFaction}
         onClose={closeModal}
         title={
           selectedItem ? VIETNAMESE.itemDetails :
@@ -746,157 +554,168 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
           selectedLocation ? VIETNAMESE.locationDetails :
           selectedLore ? VIETNAMESE.loreDetails :
           selectedCompanion ? VIETNAMESE.companionDetails :
+          selectedFaction ? "Chi Tiết Phe Phái" :
           "Chi Tiết"
         }
       >
-        {selectedItem && (
-          <div className="space-y-2 text-sm">
-            <p><strong className="text-indigo-300">Tên:</strong> {selectedItem.name}</p>
-            <p><strong className="text-indigo-300">Phân loại:</strong> {selectedItem.category}
-                {selectedItem.category === "Equipment" && ` (${(selectedItem as GameTemplates.EquipmentTemplate).equipmentType})`}
-                {selectedItem.category === "Potion" && ` (${(selectedItem as GameTemplates.PotionTemplate).potionType})`}
-                {selectedItem.category === "Material" && ` (${(selectedItem as GameTemplates.MaterialTemplate).materialType})`}
-            </p>
-            <p><strong className="text-indigo-300">Số lượng:</strong> {selectedItem.quantity}</p>
-            <p><strong className="text-indigo-300">Mô tả:</strong> {selectedItem.description}</p>
-            {selectedItem.category === "Equipment" && (selectedItem as GameTemplates.EquipmentTemplate).slot && (
-                 <p><strong className="text-indigo-300">Vị trí:</strong> {(selectedItem as GameTemplates.EquipmentTemplate).slot}</p>
+        <div className="space-y-2 text-sm">
+            {selectedItem && (
+              <>
+                <p><strong className="text-indigo-300">Tên:</strong> {selectedItem.name}</p>
+                <p><strong className="text-indigo-300">Phân loại:</strong> {selectedItem.category}</p>
+                {selectedItem.category === GameTemplates.ItemCategory.EQUIPMENT && (selectedItem as GameTemplates.EquipmentTemplate).equipmentType && <p><strong className="text-indigo-300">Loại Trang Bị:</strong> {(selectedItem as GameTemplates.EquipmentTemplate).equipmentType}</p>}
+                {selectedItem.category === GameTemplates.ItemCategory.POTION && (selectedItem as GameTemplates.PotionTemplate).potionType && <p><strong className="text-indigo-300">Loại Đan Dược:</strong> {(selectedItem as GameTemplates.PotionTemplate).potionType}</p>}
+                {selectedItem.category === GameTemplates.ItemCategory.MATERIAL && (selectedItem as GameTemplates.MaterialTemplate).materialType && <p><strong className="text-indigo-300">Loại Nguyên Liệu:</strong> {(selectedItem as GameTemplates.MaterialTemplate).materialType}</p>}
+
+                <p><strong className="text-indigo-300">Độ hiếm:</strong> {selectedItem.rarity}</p>
+                <p><strong className="text-indigo-300">Số lượng:</strong> {selectedItem.quantity}</p>
+                {selectedItem.description && <p><strong className="text-indigo-300">Mô tả:</strong> {selectedItem.description}</p>}
+                {selectedItem.value !== undefined && <p><strong className="text-indigo-300">Giá trị:</strong> {selectedItem.value}</p>}
+
+                {selectedItem.category === GameTemplates.ItemCategory.EQUIPMENT && (
+                    <>
+                        {(selectedItem as GameTemplates.EquipmentTemplate).slot && <p><strong className="text-indigo-300">Vị trí:</strong> {(selectedItem as GameTemplates.EquipmentTemplate).slot}</p>}
+                        {(selectedItem as GameTemplates.EquipmentTemplate).statBonuses && Object.keys((selectedItem as GameTemplates.EquipmentTemplate).statBonuses).length > 0 && (
+                            <div><strong className="text-indigo-300">Chỉ số cộng thêm:</strong> {renderStatBonuses((selectedItem as GameTemplates.EquipmentTemplate).statBonuses)}</div>
+                        )}
+                        {(selectedItem as GameTemplates.EquipmentTemplate).uniqueEffects && (selectedItem as GameTemplates.EquipmentTemplate).uniqueEffects.length > 0 && <p><strong className="text-indigo-300">Hiệu ứng đặc biệt:</strong> {(selectedItem as GameTemplates.EquipmentTemplate).uniqueEffects.join(', ')}</p>}
+                        {(selectedItem as GameTemplates.EquipmentTemplate).durability !== undefined && <p><strong className="text-indigo-300">Độ bền:</strong> {(selectedItem as GameTemplates.EquipmentTemplate).durability} / {(selectedItem as GameTemplates.EquipmentTemplate).maxDurability || 'N/A'}</p>}
+                        {(selectedItem as GameTemplates.EquipmentTemplate).levelRequirement !== undefined && <p><strong className="text-indigo-300">Yêu cầu cấp độ:</strong> {(selectedItem as GameTemplates.EquipmentTemplate).levelRequirement}</p>}
+                    </>
+                )}
+                {selectedItem.category === GameTemplates.ItemCategory.POTION && (
+                    <>
+                        {(selectedItem as GameTemplates.PotionTemplate).effects && (selectedItem as GameTemplates.PotionTemplate).effects.length > 0 && <p><strong className="text-indigo-300">Hiệu ứng:</strong> {(selectedItem as GameTemplates.PotionTemplate).effects.join(', ')}</p>}
+                        {(selectedItem as GameTemplates.PotionTemplate).durationTurns !== undefined && <p><strong className="text-indigo-300">Thời gian hiệu lực:</strong> {(selectedItem as GameTemplates.PotionTemplate).durationTurns} lượt</p>}
+                        {(selectedItem as GameTemplates.PotionTemplate).cooldownTurns !== undefined && <p><strong className="text-indigo-300">Thời gian hồi phục (sử dụng):</strong> {(selectedItem as GameTemplates.PotionTemplate).cooldownTurns} lượt</p>}
+                    </>
+                )}
+                 {selectedItem.category === GameTemplates.ItemCategory.QUEST_ITEM && (selectedItem as GameTemplates.QuestItemTemplate).questIdAssociated && <p><strong className="text-indigo-300">Liên quan đến nhiệm vụ ID:</strong> {(selectedItem as GameTemplates.QuestItemTemplate).questIdAssociated}</p>}
+              </>
             )}
-            {selectedItem.category === "Equipment" &&
-                Object.keys((selectedItem as GameTemplates.EquipmentTemplate).statBonuses).length > 0 && (
-              <div>
-                <strong className="text-indigo-300">Chỉ số cộng thêm:</strong>
-                <ul className="list-disc list-inside pl-4 text-xs">
-                  {Object.entries((selectedItem as GameTemplates.EquipmentTemplate).statBonuses).map(([key, value]) => {
-                    if (value && typeof value === 'number' && value !== 0) {
-                      const statLabels: Record<string, string> = { hp: "HP", maxHp: "HP Tối Đa", mana: "Mana", maxMana: "Mana Tối Đa", atk: "Tấn Công", exp: "EXP"};
-                      const label = statLabels[key as keyof PlayerStats] || key;
-                      return <li key={key}><span className="text-gray-300">{label}:</span> <span className={value > 0 ? "text-green-400" : "text-red-400"}>{value > 0 ? `+${value}` : value}</span></li>;
+            {selectedSkill && (
+              <>
+                <p><strong className="text-indigo-300">Tên:</strong> {selectedSkill.name}</p>
+                <p><strong className="text-indigo-300">Loại:</strong> {selectedSkill.skillType}</p>
+                {selectedSkill.description && <p><strong className="text-indigo-300">Mô tả:</strong> {selectedSkill.description}</p>}
+                {selectedSkill.detailedEffect && <p><strong className="text-indigo-300">Hiệu ứng chi tiết:</strong> {selectedSkill.detailedEffect}</p>}
+                <p><strong className="text-indigo-300">Tiêu hao Mana:</strong> {selectedSkill.manaCost || 0}</p>
+                {selectedSkill.baseDamage > 0 && <p><strong className="text-indigo-300">Sát thương cơ bản:</strong> {selectedSkill.baseDamage}</p>}
+                {selectedSkill.damageMultiplier > 0 && <p><strong className="text-indigo-300">Hệ số Sức Tấn Công:</strong> x{selectedSkill.damageMultiplier}</p>}
+                {selectedSkill.healingAmount > 0 && <p><strong className="text-indigo-300">Hồi phục cơ bản:</strong> {selectedSkill.healingAmount}</p>}
+                {selectedSkill.cooldown !== undefined && <p><strong className="text-indigo-300">Thời gian hồi:</strong> {selectedSkill.cooldown} lượt (Hiện tại: {selectedSkill.currentCooldown || 0})</p>}
+                {selectedSkill.targetType && <p><strong className="text-indigo-300">Mục tiêu:</strong> {selectedSkill.targetType}</p>}
+                {selectedSkill.levelRequirement !== undefined && <p><strong className="text-indigo-300">Yêu cầu cấp độ:</strong> {selectedSkill.levelRequirement}</p>}
+                {selectedSkill.requiredRealm && <p><strong className="text-indigo-300">Yêu cầu cảnh giới:</strong> {selectedSkill.requiredRealm}</p>}
+                {selectedSkill.prerequisiteSkillId && <p><strong className="text-indigo-300">Kỹ năng tiền đề ID:</strong> {selectedSkill.prerequisiteSkillId}</p>}
+                {selectedSkill.isUltimate && <p><strong className="text-indigo-300">Là Kỹ Năng Tối Thượng:</strong> Có</p>}
+                {selectedSkill.xpGainOnUse !== undefined && <p><strong className="text-indigo-300">Kinh nghiệm nhận khi dùng:</strong> {selectedSkill.xpGainOnUse}</p>}
+              </>
+            )}
+            {selectedQuest && (
+              <>
+                <p><strong className="text-indigo-300">Tên:</strong> {selectedQuest.title}</p>
+                {selectedQuest.description && <p><strong className="text-indigo-300">Mô tả:</strong> {selectedQuest.description}</p>}
+                <p><strong className="text-indigo-300">Trạng thái:</strong>
+                    {selectedQuest.status === 'active' ? "Đang làm" :
+                    selectedQuest.status === 'completed' ? <span className="text-green-400 font-semibold">Hoàn thành</span> :
+                    <span className="text-red-400 font-semibold">Thất bại</span>
                     }
-                    return null;
-                  })}
-                </ul>
-              </div>
+                </p>
+                <p className="font-semibold text-indigo-300 mt-2">Mục tiêu:</p>
+                {selectedQuest.objectives.length > 0 ? (
+                  <ul className="list-none pl-0 space-y-1">
+                    {selectedQuest.objectives.map(obj => (
+                      <li key={obj.id} className={`flex items-center text-xs
+                        ${obj.completed && selectedQuest.status !== 'failed' ? 'text-green-400' : (selectedQuest.status === 'failed' ? 'text-red-400 opacity-80' : 'text-gray-300')}`}>
+                        {obj.completed && selectedQuest.status !== 'failed' && (
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 mr-1.5 flex-shrink-0 text-green-400">
+                            <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                        {selectedQuest.status === 'failed' && (
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 mr-1.5 flex-shrink-0 text-red-500">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" />
+                            </svg>
+                        )}
+                        {!obj.completed && selectedQuest.status === 'active' && (
+                            <span className="w-4 h-4 mr-1.5 flex-shrink-0 inline-flex items-center justify-center text-gray-400">-</span>
+                        )}
+                        <span className={`${obj.completed && selectedQuest.status !== 'failed' ? 'line-through' : ''} ${selectedQuest.status === 'failed' ? 'line-through text-red-400 opacity-70' : ''}`}>{obj.text}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p className="italic text-gray-400 text-xs">Không có mục tiêu cụ thể.</p>}
+              </>
             )}
-            {selectedItem.category === "Equipment" && (selectedItem as GameTemplates.EquipmentTemplate).uniqueEffects && (selectedItem as GameTemplates.EquipmentTemplate).uniqueEffects.length > 0 && (
-                <p><strong className="text-indigo-300">Hiệu ứng đặc biệt:</strong> {(selectedItem as GameTemplates.EquipmentTemplate).uniqueEffects.join(', ')}</p>
-            )}
-            {selectedItem.category === "Potion" && (selectedItem as GameTemplates.PotionTemplate).effects && (selectedItem as GameTemplates.PotionTemplate).effects.length > 0 && (
-                 <p><strong className="text-indigo-300">Hiệu ứng:</strong> {(selectedItem as GameTemplates.PotionTemplate).effects.join(', ')}</p>
-            )}
-            {selectedItem.usable !== undefined && <p><strong className="text-indigo-300">Có thể dùng:</strong> {selectedItem.usable ? "Có" : "Không"}</p>}
-            {selectedItem.consumable !== undefined && <p><strong className="text-indigo-300">Tiêu hao:</strong> {selectedItem.consumable ? "Có" : "Không"}</p>}
-          </div>
-        )}
-        {selectedSkill && (
-          <div className="space-y-2 text-sm">
-            <p><strong className="text-indigo-300">Tên:</strong> {selectedSkill.name}</p>
-            <p><strong className="text-indigo-300">Loại:</strong> {selectedSkill.skillType}</p>
-            {selectedSkill.description && <p><strong className="text-indigo-300">Mô tả:</strong> {selectedSkill.description}</p>}
-            {selectedSkill.detailedEffect && <p><strong className="text-indigo-300">Hiệu ứng chi tiết:</strong> {selectedSkill.detailedEffect}</p>}
-            {selectedSkill.manaCost !== undefined && <p><strong className="text-indigo-300">Tiêu hao Mana:</strong> {selectedSkill.manaCost}</p>}
-            {selectedSkill.cooldown !== undefined && <p><strong className="text-indigo-300">Thời gian hồi:</strong> {selectedSkill.cooldown} lượt</p>}
-          </div>
-        )}
-        {selectedQuest && (
-          <div className="space-y-2 text-sm">
-            <p><strong className="text-indigo-300">Tên:</strong> {selectedQuest.title}</p>
-            {selectedQuest.description && <p><strong className="text-indigo-300">Mô tả:</strong> {selectedQuest.description}</p>}
-             <p><strong className="text-indigo-300">Trạng thái:</strong>
-                {selectedQuest.status === 'active' ? "Đang làm" :
-                 selectedQuest.status === 'completed' ? <span className="text-green-400 font-semibold">Hoàn thành</span> :
-                 <span className="text-red-400 font-semibold">Thất bại</span>
-                }
-            </p>
-            <p className="font-semibold text-indigo-300 mt-2">Mục tiêu:</p>
-            {selectedQuest.objectives.length > 0 ? (
-              <ul className="list-none pl-0 space-y-1">
-                {selectedQuest.objectives.map(obj => (
-                  <li key={obj.id} className={`flex items-center text-xs 
-                    ${obj.completed && selectedQuest.status !== 'failed' ? 'text-green-400' : (selectedQuest.status === 'failed' ? 'text-red-400 opacity-80' : 'text-gray-300')}`}>
-                    {obj.completed && selectedQuest.status !== 'failed' && (
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 mr-1.5 flex-shrink-0 text-green-400">
-                        <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
-                      </svg>
-                    )}
-                    {selectedQuest.status === 'failed' && (
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 mr-1.5 flex-shrink-0 text-red-500">
-                           <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" />
-                        </svg>
-                    )}
-                    {!obj.completed && selectedQuest.status === 'active' && (
-                        <span className="w-4 h-4 mr-1.5 flex-shrink-0 inline-flex items-center justify-center text-gray-400">-</span>
-                    )}
-                    <span className={`${obj.completed && selectedQuest.status !== 'failed' ? 'line-through' : ''} ${selectedQuest.status === 'failed' ? 'line-through text-red-400 opacity-70' : ''}`}>
-                        {obj.text}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            ) : <p className="italic text-gray-400 text-xs">Không có mục tiêu cụ thể.</p>}
-          </div>
-        )}
-        {selectedNpc && (
-            <div className="space-y-2 text-sm">
-                <p><strong className="text-indigo-300">Tên:</strong> {selectedNpc.name}</p>
-                {selectedNpc.title && <p><strong className="text-indigo-300">Chức danh:</strong> {selectedNpc.title}</p>}
+            {selectedNpc && (<>
+                <img
+                    src={getSelectedNpcAvatarSrc()}
+                    alt={selectedNpc.name}
+                    className="w-24 h-24 sm:w-32 sm:h-32 rounded-lg object-cover mx-auto mb-3 border-2 border-indigo-400 shadow-md"
+                />
+                <p><strong className="text-indigo-300">Tên:</strong> {selectedNpc.name} {selectedNpc.title ? `(${selectedNpc.title})` : ''}</p>
+                {selectedNpc.gender && <p><strong className="text-indigo-300">Giới tính:</strong> {selectedNpc.gender}</p>}
+                <p><strong className="text-indigo-300">Cảnh giới:</strong> {selectedNpc.realm || "Không rõ"}</p>
+                {selectedNpc.level !== undefined && <p><strong className="text-indigo-300">Cấp độ:</strong> {String(selectedNpc.level)}</p>}
                 {selectedNpc.description && selectedNpc.description.trim() && <p><strong className="text-indigo-300">Mô tả:</strong> {selectedNpc.description}</p>}
-                {selectedNpc.factionId && <p><strong className="text-indigo-300">Phe phái ID:</strong> {selectedNpc.factionId}</p>}
-            </div>
-        )}
-        {selectedLocation && (
-            <div className="space-y-2 text-sm">
+                {selectedNpc.personalityTraits && selectedNpc.personalityTraits.length > 0 && <p><strong className="text-indigo-300">Tính cách:</strong> {selectedNpc.personalityTraits.join(', ')}</p>}
+                <p><strong className="text-indigo-300">Thiện cảm:</strong> {String(selectedNpc.affinity)}</p>
+                {selectedNpc.factionId && <p><strong className="text-indigo-300">Phe phái:</strong> {knowledgeBase.discoveredFactions.find(f => f.id === selectedNpc.factionId)?.name || selectedNpc.factionId}</p>}
+
+                {selectedNpc.realm === "Không rõ" ? (
+                    <div>
+                        <p><strong className="text-indigo-300">Sinh Lực:</strong> Không rõ</p>
+                        <p><strong className="text-indigo-300">Linh Lực:</strong> Không rõ</p>
+                        <p><strong className="text-indigo-300">Sức Tấn Công:</strong> Không rõ</p>
+                    </div>
+                ) : selectedNpc.stats && (
+                    <div><strong className="text-indigo-300">Chỉ số:</strong><ul className="list-disc list-inside pl-4 text-xs">
+                        {selectedNpc.stats.sinhLuc !== undefined && <li>Sinh Lực: {String(selectedNpc.stats.sinhLuc)} / {String(selectedNpc.stats.maxSinhLuc || selectedNpc.stats.sinhLuc)}</li>}
+                        {selectedNpc.stats.linhLuc !== undefined && <li>Linh Lực: {String(selectedNpc.stats.linhLuc)} / {String(selectedNpc.stats.maxLinhLuc || selectedNpc.stats.linhLuc)}</li>}
+                        {selectedNpc.stats.sucTanCong !== undefined && <li>Sức Tấn Công: {String(selectedNpc.stats.sucTanCong)}</li>}
+                    </ul></div>
+                )}
+                {selectedNpc.isEssential && <p><strong className="text-indigo-300">Là nhân vật quan trọng:</strong> Có</p>}
+                {selectedNpc.locationId && <p><strong className="text-indigo-300">Vị trí hiện tại:</strong> {knowledgeBase.discoveredLocations.find(l=>l.id === selectedNpc.locationId)?.name || selectedNpc.locationId}</p>}
+            </>)}
+            {selectedLocation && (<>
                 <p><strong className="text-indigo-300">Tên:</strong> {selectedLocation.name}</p>
                 {selectedLocation.description && selectedLocation.description.trim() && <p><strong className="text-indigo-300">Mô tả:</strong> {selectedLocation.description}</p>}
-            </div>
-        )}
-        {selectedLore && (
-            <div className="space-y-2 text-sm">
+                {selectedLocation.regionId && <p><strong className="text-indigo-300">Vùng:</strong> {selectedLocation.regionId}</p>}
+                <p><strong className="text-indigo-300">Khu vực an toàn:</strong> {selectedLocation.isSafeZone ? "Có" : "Không"}</p>
+                {selectedLocation.environmentalEffects && selectedLocation.environmentalEffects.length > 0 && <p><strong className="text-indigo-300">Hiệu ứng môi trường:</strong> {selectedLocation.environmentalEffects.join(', ')}</p>}
+                {selectedLocation.requiredLevel !== undefined && <p><strong className="text-indigo-300">Yêu cầu cấp độ vào:</strong> {String(selectedLocation.requiredLevel)}</p>}
+                {selectedLocation.requiredQuestIdForEntry && <p><strong className="text-indigo-300">Yêu cầu nhiệm vụ ID để vào:</strong> {selectedLocation.requiredQuestIdForEntry}</p>}
+                {selectedLocation.discoverableNPCIds && selectedLocation.discoverableNPCIds.length > 0 && <p><strong className="text-indigo-300">NPC có thể gặp:</strong> {selectedLocation.discoverableNPCIds.map(id => knowledgeBase.discoveredNPCs.find(n=>n.id===id)?.name || id).join(', ')}</p>}
+            </>)}
+            {selectedFaction && (<>
+                <p><strong className="text-indigo-300">Tên Phe Phái:</strong> {selectedFaction.name}</p>
+                {selectedFaction.description && <p><strong className="text-indigo-300">Mô tả:</strong> {selectedFaction.description}</p>}
+                <p><strong className="text-indigo-300">Chính tà:</strong> {selectedFaction.alignment}</p>
+                <p><strong className="text-indigo-300">Uy tín người chơi:</strong> {String(selectedFaction.playerReputation)}</p>
+                {selectedFaction.leaderNPCId && <p><strong className="text-indigo-300">Lãnh đạo:</strong> {knowledgeBase.discoveredNPCs.find(n => n.id === selectedFaction.leaderNPCId)?.name || selectedFaction.leaderNPCId}</p>}
+                {selectedFaction.baseLocationId && <p><strong className="text-indigo-300">Trụ sở:</strong> {knowledgeBase.discoveredLocations.find(l => l.id === selectedFaction.baseLocationId)?.name || selectedFaction.baseLocationId}</p>}
+                {selectedFaction.alliedFactionIds && selectedFaction.alliedFactionIds.length > 0 && <p><strong className="text-indigo-300">Đồng minh:</strong> {selectedFaction.alliedFactionIds.map(id => knowledgeBase.discoveredFactions.find(f=>f.id===id)?.name || id).join(', ')}</p>}
+                {selectedFaction.enemyFactionIds && selectedFaction.enemyFactionIds.length > 0 && <p><strong className="text-indigo-300">Kẻ địch:</strong> {selectedFaction.enemyFactionIds.map(id => knowledgeBase.discoveredFactions.find(f=>f.id===id)?.name || id).join(', ')}</p>}
+            </>)}
+            {selectedLore && (<>
                 <p><strong className="text-indigo-300">Tiêu đề:</strong> {selectedLore.title}</p>
                 {selectedLore.content && selectedLore.content.trim() && <p className="whitespace-pre-wrap"><strong className="text-indigo-300">Nội dung:</strong> {selectedLore.content}</p>}
-            </div>
-        )}
-        {selectedCompanion && (
-            <div className="space-y-2 text-sm">
+            </>)}
+            {selectedCompanion && (<>
                 <p><strong className="text-indigo-300">Tên:</strong> {selectedCompanion.name}</p>
                 {selectedCompanion.description && selectedCompanion.description.trim() && <p><strong className="text-indigo-300">Mô tả:</strong> {selectedCompanion.description}</p>}
-                <p><strong className="text-indigo-300">HP:</strong> {selectedCompanion.hp} / {selectedCompanion.maxHp}</p>
-                <p><strong className="text-indigo-300">Mana:</strong> {selectedCompanion.mana} / {selectedCompanion.maxMana}</p>
-                <p><strong className="text-indigo-300">ATK:</strong> {selectedCompanion.atk}</p>
-            </div>
-        )}
+                <p><strong className="text-indigo-300">HP:</strong> {String(selectedCompanion.hp)} / {String(selectedCompanion.maxHp)}</p>
+                <p><strong className="text-indigo-300">Mana:</strong> {String(selectedCompanion.mana)} / {String(selectedCompanion.maxMana)}</p>
+                <p><strong className="text-indigo-300">ATK:</strong> {String(selectedCompanion.atk)}</p>
+            </>)}
+        </div>
       </Modal>
 
-      <MiniInfoPopover
-        isOpen={miniInfoPopover.isOpen}
-        targetRect={miniInfoPopover.targetRect}
-        entity={miniInfoPopover.entity}
-        entityType={miniInfoPopover.entityType}
-        onClose={() => setMiniInfoPopover(prev => ({ ...prev, isOpen: false }))}
-      />
-
-      {showDebugPanel && <DebugPanelDisplay
-                            kb={knowledgeBase}
-                            sentPromptsLog={sentPromptsLog}
-                            rawAiResponsesLog={rawAiResponsesLog}
-                            latestPromptTokenCount={latestPromptTokenCount}
-                            summarizationResponsesLog={summarizationResponsesLog}
-                            currentPageDisplay={currentPageDisplay}
-                            totalPages={totalPages}
-                            isAutoPlaying={isAutoPlaying}
-                            onToggleAutoPlay={onToggleAutoPlay}
-                           />}
-
-      {isStyleSettingsModalOpen && (
-        <StyleSettingsModal
-          initialSettings={styleSettings}
-          onSave={(newSettings) => {
-            onUpdateStyleSettings(newSettings);
-            setIsStyleSettingsModalOpen(false);
-          }}
-          onClose={() => setIsStyleSettingsModalOpen(false)}
-        />
-      )}
+      <MiniInfoPopover isOpen={miniInfoPopover.isOpen} targetRect={miniInfoPopover.targetRect} entity={miniInfoPopover.entity} entityType={miniInfoPopover.entityType} onClose={() => setMiniInfoPopover(prev => ({ ...prev, isOpen: false }))} knowledgeBase={knowledgeBase} />
+      {showDebugPanel && <DebugPanelDisplay kb={knowledgeBase} sentPromptsLog={sentPromptsLog} rawAiResponsesLog={rawAiResponsesLog} latestPromptTokenCount={latestPromptTokenCount} summarizationResponsesLog={summarizationResponsesLog} sentCraftingPromptsLog={sentCraftingPromptsLog} receivedCraftingResponsesLog={receivedCraftingResponsesLog} sentNpcAvatarPromptsLog={sentNpcAvatarPromptsLog} currentPageDisplay={currentPageDisplay} totalPages={totalPages} isAutoPlaying={isAutoPlaying} onToggleAutoPlay={onToggleAutoPlay} />}
+      {isStyleSettingsModalOpen && <StyleSettingsModal initialSettings={styleSettings} onSave={(newSettings) => { onUpdateStyleSettings(newSettings); setIsStyleSettingsModalOpen(false); }} onClose={() => setIsStyleSettingsModalOpen(false)} />}
     </div>
   );
 };

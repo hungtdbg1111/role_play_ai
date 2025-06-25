@@ -1,17 +1,18 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Item, Skill, Quest, NPC, GameLocation, WorldLoreEntry, Companion, QuestObjective } from '../../types';
-import * as GameTemplates from '../../templates'; // Import for type assertions
+import { Item, Skill, Quest, NPC, GameLocation, WorldLoreEntry, Companion, QuestObjective, Faction, KnowledgeBase } from '../../types'; // Added Faction, KnowledgeBase
+import * as GameTemplates from '../../templates'; 
 
 interface MiniInfoPopoverProps {
   isOpen: boolean;
   targetRect: DOMRect | null;
-  entity: Item | Skill | Quest | NPC | GameLocation | WorldLoreEntry | Companion | null;
-  entityType: 'item' | 'skill' | 'quest' | 'npc' | 'location' | 'lore' | 'companion' | null;
+  entity: Item | Skill | Quest | NPC | GameLocation | WorldLoreEntry | Companion | Faction | null;
+  entityType: 'item' | 'skill' | 'quest' | 'npc' | 'location' | 'lore' | 'companion' | 'faction' | null;
   onClose: () => void;
+  knowledgeBase: KnowledgeBase; // Pass full KB for context like faction names
 }
 
-const MiniInfoPopover: React.FC<MiniInfoPopoverProps> = ({ isOpen, targetRect, entity, entityType, onClose }) => {
+const MiniInfoPopover: React.FC<MiniInfoPopoverProps> = ({ isOpen, targetRect, entity, entityType, onClose, knowledgeBase }) => {
   const popoverRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ top: 0, left: 0 });
 
@@ -40,10 +41,9 @@ const MiniInfoPopover: React.FC<MiniInfoPopoverProps> = ({ isOpen, targetRect, e
   useEffect(() => {
     if (isOpen && targetRect && popoverRef.current) {
       const popoverElement = popoverRef.current;
-      let top = targetRect.bottom + 5; // 5px below the keyword
+      let top = targetRect.bottom + 5; 
       let left = targetRect.left;
 
-      // Adjust if it goes off-screen
       if (left + popoverElement.offsetWidth > window.innerWidth - 10) {
         left = window.innerWidth - popoverElement.offsetWidth - 10;
       }
@@ -51,7 +51,7 @@ const MiniInfoPopover: React.FC<MiniInfoPopoverProps> = ({ isOpen, targetRect, e
         left = 10;
       }
       if (top + popoverElement.offsetHeight > window.innerHeight - 10) {
-        top = targetRect.top - popoverElement.offsetHeight - 5; // Place above
+        top = targetRect.top - popoverElement.offsetHeight - 5; 
       }
        if (top < 10) {
         top = 10;
@@ -66,17 +66,24 @@ const MiniInfoPopover: React.FC<MiniInfoPopoverProps> = ({ isOpen, targetRect, e
     switch (entityType) {
       case 'item':
         const item = entity as Item;
+        let itemDetails = "";
+        if (item.category === GameTemplates.ItemCategory.EQUIPMENT) {
+            const equip = item as GameTemplates.EquipmentTemplate;
+            itemDetails = `${equip.equipmentType}, ${equip.rarity}. Slot: ${equip.slot || 'N/A'}`;
+            const bonuses = Object.entries(equip.statBonuses).filter(([_, val]) => val !== 0 && val !== undefined);
+            if (bonuses.length > 0) {
+                itemDetails += `. Bonus: ${bonuses.map(([key, val]) => `${key.replace(/([A-Z])/g, ' $1').trim()}: ${val}`).join(', ').substring(0,50)}...`;
+            }
+        } else if (item.category === GameTemplates.ItemCategory.POTION) {
+            const potion = item as GameTemplates.PotionTemplate;
+            itemDetails = `${potion.potionType}, ${potion.rarity}. Effects: ${potion.effects.join(', ').substring(0,50)}...`;
+        } else {
+            itemDetails = `${item.category}, ${item.rarity}. Số lượng: ${item.quantity}`;
+        }
         return (
           <>
-            <p><strong className="text-indigo-300">Phân loại:</strong> {item.category}
-                {item.category === "Equipment" && ` (${(item as GameTemplates.EquipmentTemplate).equipmentType})`}
-                {item.category === "Potion" && ` (${(item as GameTemplates.PotionTemplate).potionType})`}
-                {item.category === "Material" && ` (${(item as GameTemplates.MaterialTemplate).materialType})`}
-            </p>
-            <p><strong className="text-indigo-300">Số lượng:</strong> {item.quantity}</p>
+            <p><strong className="text-indigo-300">Thông tin:</strong> {itemDetails}</p>
             {item.description && <p className="text-xs mt-1 italic text-gray-400">{item.description.substring(0, 100)}{item.description.length > 100 ? '...' : ''}</p>}
-            {item.category === "Potion" && (item as GameTemplates.PotionTemplate).effects && (item as GameTemplates.PotionTemplate).effects.length > 0 && <p className="text-xs mt-1 text-cyan-300">{(item as GameTemplates.PotionTemplate).effects.join(', ').substring(0,100)}...</p>}
-            {item.category === "Equipment" && (item as GameTemplates.EquipmentTemplate).uniqueEffects && (item as GameTemplates.EquipmentTemplate).uniqueEffects.length > 0 && <p className="text-xs mt-1 text-cyan-300">{(item as GameTemplates.EquipmentTemplate).uniqueEffects.join(', ').substring(0,100)}...</p>}
           </>
         );
       case 'skill':
@@ -84,12 +91,13 @@ const MiniInfoPopover: React.FC<MiniInfoPopoverProps> = ({ isOpen, targetRect, e
         return (
           <>
             <p><strong className="text-indigo-300">Loại:</strong> {skill.skillType}</p>
-            {skill.description && <p className="text-xs mt-1 italic text-gray-400">{skill.description.substring(0,100)}{skill.description.length > 100 ? '...' : ''}</p>}
-            {skill.detailedEffect && <p><strong className="text-indigo-300">Hiệu ứng:</strong> {skill.detailedEffect.substring(0,100)}{skill.detailedEffect.length > 100 ? '...' : ''}</p>}
+            <p><strong className="text-indigo-300">Mana:</strong> {skill.manaCost || 0}. <strong className="text-indigo-300">Hồi chiêu:</strong> {skill.cooldown || 0} lượt.</p>
+            {skill.detailedEffect && <p className="text-xs mt-1 italic text-gray-400">{skill.detailedEffect.substring(0,100)}{skill.detailedEffect.length > 100 ? '...' : ''}</p>}
           </>
         );
       case 'quest':
         const quest = entity as Quest;
+        const activeObjective = quest.objectives.find(obj => !obj.completed);
         return (
           <>
             <p><strong className="text-indigo-300">Trạng thái:</strong>
@@ -98,41 +106,35 @@ const MiniInfoPopover: React.FC<MiniInfoPopoverProps> = ({ isOpen, targetRect, e
                <span className="text-red-400 font-semibold">Thất bại</span>
               }
             </p>
-            {quest.objectives.slice(0, 2).map((obj: QuestObjective) => (
-              <p key={obj.id} className={`text-xs flex items-center 
-                ${obj.completed && quest.status !== 'failed' ? 'text-green-400' : (quest.status === 'failed' ? 'text-red-400 opacity-80' : 'text-gray-300')}`}>
-                {obj.completed && quest.status !== 'failed' && (
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3 mr-1 flex-shrink-0 text-green-400">
-                    <path fillRule="evenodd" d="M12.416 3.376a.75.75 0 0 1 .208 1.04l-5 7.5a.75.75 0 0 1-1.154.114l-3-3a.75.75 0 0 1 1.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 0 1 1.04-.207Z" clipRule="evenodd" />
-                  </svg>
-                )}
-                {quest.status === 'failed' && (
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3 mr-1 flex-shrink-0 text-red-500">
-                     <path fillRule="evenodd" d="M2.22 2.22a.75.75 0 0 1 1.06 0L8 6.94l4.72-4.72a.75.75 0 1 1 1.06 1.06L9.06 8l4.72 4.72a.75.75 0 1 1-1.06 1.06L8 9.06l-4.72 4.72a.75.75 0 0 1-1.06-1.06L6.94 8 2.22 3.28a.75.75 0 0 1 0-1.06z" clipRule="evenodd" />
-                  </svg>
-                )}
-                {!obj.completed && quest.status === 'active' && (
-                  <span className="w-3 h-3 mr-1 flex-shrink-0 inline-flex items-center justify-center text-gray-400">-</span>
-                )}
-                <span className={`${obj.completed && quest.status !== 'failed' ? 'line-through' : ''} ${quest.status === 'failed' ? 'line-through text-red-400 opacity-70' : ''}`}>
-                  {obj.text.substring(0, 35)}{obj.text.length > 35 ? '...' : ''}
-                </span>
-              </p>
-            ))}
-            {quest.objectives.length > 2 && <p className="text-xs text-gray-400">...</p>}
+            {activeObjective && <p className="text-xs mt-1"><strong className="text-yellow-300">Mục tiêu kế tiếp:</strong> {activeObjective.text.substring(0,70)}...</p>}
+            {!activeObjective && quest.status === 'active' && <p className="text-xs mt-1 text-gray-400">Tất cả mục tiêu hiện tại đã hoàn thành!</p>}
           </>
         );
       case 'npc':
         const npc = entity as NPC;
+        const factionName = npc.factionId ? (knowledgeBase.discoveredFactions.find(f => f.id === npc.factionId)?.name || npc.factionId) : 'Không rõ';
+        const isRealmUnknown = npc.realm === "Không rõ";
         return (
           <>
-            {npc.description && <p className="text-xs mt-1 italic text-gray-400">{npc.description.substring(0,150)}{npc.description.length > 150 ? '...' : ''}</p>}
+            {npc.title && <p><strong className="text-indigo-300">Chức danh:</strong> {npc.title}</p>}
+            {npc.gender && npc.gender !== "Không rõ" && <p><strong className="text-indigo-300">Giới tính:</strong> {npc.gender}</p>}
+            <p><strong className="text-indigo-300">Cảnh giới:</strong> {npc.realm || "Không rõ"}</p>
+            <p><strong className="text-indigo-300">Thiện cảm:</strong> {npc.affinity}. <strong className="text-indigo-300">Phe:</strong> {factionName}</p>
+            {isRealmUnknown ? (
+              <p><strong className="text-indigo-300">Sinh Lực:</strong> Không rõ</p>
+            ) : (
+              npc.stats?.sinhLuc !== undefined && npc.stats?.maxSinhLuc !== undefined && 
+                <p><strong className="text-indigo-300">Sinh Lực:</strong> {npc.stats.sinhLuc} / {npc.stats.maxSinhLuc}</p>
+            )}
+            {npc.description && <p className="text-xs mt-1 italic text-gray-400">{npc.description.substring(0,100)}{npc.description.length > 100 ? '...' : ''}</p>}
           </>
         );
       case 'location':
         const location = entity as GameLocation;
         return (
           <>
+            {location.regionId && <p><strong className="text-indigo-300">Vùng:</strong> {location.regionId}</p>}
+            <p><strong className="text-indigo-300">An toàn:</strong> {location.isSafeZone ? "Có" : "Không"}</p>
             {location.description && <p className="text-xs mt-1 italic text-gray-400">{location.description.substring(0,150)}{location.description.length > 150 ? '...' : ''}</p>}
           </>
         );
@@ -147,9 +149,17 @@ const MiniInfoPopover: React.FC<MiniInfoPopoverProps> = ({ isOpen, targetRect, e
         const companion = entity as Companion;
         return (
           <>
-            <p><strong className="text-indigo-300">HP:</strong> {companion.hp}/{companion.maxHp}</p>
-            <p><strong className="text-indigo-300">ATK:</strong> {companion.atk}</p>
-             {companion.description && <p className="text-xs mt-1 italic text-gray-400">{companion.description.substring(0,100)}{companion.description.length > 100 ? '...' : ''}</p>}
+            <p><strong className="text-indigo-300">HP:</strong> {companion.hp}/{companion.maxHp}. <strong className="text-indigo-300">ATK:</strong> {companion.atk}</p>
+            {companion.description && <p className="text-xs mt-1 italic text-gray-400">{companion.description.substring(0,100)}{companion.description.length > 100 ? '...' : ''}</p>}
+          </>
+        );
+      case 'faction':
+        const faction = entity as Faction;
+        return (
+          <>
+            <p><strong className="text-indigo-300">Chính tà:</strong> {faction.alignment}</p>
+            <p><strong className="text-indigo-300">Uy tín người chơi:</strong> {faction.playerReputation}</p>
+            {faction.description && <p className="text-xs mt-1 italic text-gray-400">{faction.description.substring(0,100)}{faction.description.length > 100 ? '...' : ''}</p>}
           </>
         );
       default:
@@ -162,7 +172,7 @@ const MiniInfoPopover: React.FC<MiniInfoPopoverProps> = ({ isOpen, targetRect, e
   return (
     <div
       ref={popoverRef}
-      className="fixed z-70 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-3 text-sm text-gray-100 max-w-xs transition-opacity duration-150" // Increased z-index
+      className="fixed z-70 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-3 text-sm text-gray-100 max-w-xs transition-opacity duration-150"
       style={{ top: `${position.top}px`, left: `${position.left}px` }}
       role="tooltip"
       aria-live="polite"

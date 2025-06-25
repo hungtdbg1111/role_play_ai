@@ -3,9 +3,9 @@ import { SaveGameData, SaveGameMeta, KnowledgeBase, GameMessage } from '../types
 import { APP_VERSION, VIETNAMESE, MAX_AUTO_SAVE_SLOTS } from '../constants';
 
 const DB_NAME = 'DaoDoAIDB';
-const DB_VERSION = 1; // Keep version 1 if schema doesn't change for auto-save fields
-const SAVES_STORE_NAME = 'gameSaves_v2'; // Changed store name to avoid conflicts with old saves if any structure changes were made implicitly by new KB fields. If no structure change, can keep old name.
-const LOCAL_USER_ID = 'local_player'; // Generic ID for local saves
+const DB_VERSION = 2; // Incremented version
+const SAVES_STORE_NAME = 'gameSaves_v2'; 
+const LOCAL_USER_ID = 'local_player'; 
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -18,7 +18,7 @@ const getDb = (): Promise<IDBDatabase> => {
       request.onerror = () => {
         // console.error('[DEBUG_IDB] IndexedDB error on open:', request.error);
         reject('Error opening IndexedDB.');
-        dbPromise = null; // Reset promise on error
+        dbPromise = null; 
       };
 
       request.onsuccess = () => {
@@ -27,18 +27,19 @@ const getDb = (): Promise<IDBDatabase> => {
       };
 
       request.onupgradeneeded = (event) => {
-        // console.log('[DEBUG_IDB] IndexedDB upgrade needed.');
+        // console.log(`[DEBUG_IDB] IndexedDB upgrade needed. Old version: ${event.oldVersion}, New version: ${event.newVersion}`);
         const db = (event.target as IDBOpenDBRequest).result;
+        const transaction = (event.target as IDBOpenDBRequest).transaction;
+
         if (!db.objectStoreNames.contains(SAVES_STORE_NAME)) {
           // console.log(`[DEBUG_IDB] Creating object store: ${SAVES_STORE_NAME}`);
           const store = db.createObjectStore(SAVES_STORE_NAME, { keyPath: 'id', autoIncrement: true });
           // console.log(`[DEBUG_IDB] Creating index 'name_userId' on ${SAVES_STORE_NAME}`);
-          store.createIndex('name_userId', ['name', 'userId']); 
+          store.createIndex('name_userId', ['name', 'userId']);
           // console.log(`[DEBUG_IDB] Creating index 'userId_timestamp' on ${SAVES_STORE_NAME}`);
           store.createIndex('userId_timestamp', ['userId', 'timestamp']);
         } else {
           // console.log(`[DEBUG_IDB] Object store ${SAVES_STORE_NAME} already exists. Checking indices.`);
-          const transaction = (event.target as IDBOpenDBRequest).transaction;
           if (transaction) {
             const store = transaction.objectStore(SAVES_STORE_NAME);
             if (!store.indexNames.contains('name_userId')) {
@@ -49,6 +50,8 @@ const getDb = (): Promise<IDBDatabase> => {
               // console.log(`[DEBUG_IDB] Creating index 'userId_timestamp' on existing store ${SAVES_STORE_NAME}`);
               store.createIndex('userId_timestamp', ['userId', 'timestamp']);
             }
+          } else {
+            // console.warn("[DEBUG_IDB] onupgradeneeded: transaction is null, cannot check/create indices on existing store if it already existed with an older schema but same name.");
           }
         }
         // console.log('[DEBUG_IDB] IndexedDB upgrade complete.');
@@ -61,8 +64,8 @@ const getDb = (): Promise<IDBDatabase> => {
 export const saveGameToIndexedDB = async (
   knowledgeBase: KnowledgeBase,
   gameMessages: GameMessage[],
-  saveName: string, // Name for the save (user-defined or "Auto Save Slot X")
-  existingSaveId: string | number | null // Pass string or number ID for existing save to update
+  saveName: string, 
+  existingSaveId: string | number | null 
 ): Promise<string> => {
   // console.log(`[SAVE_DEBUG_DB] saveGameToIndexedDB called. Name: "${saveName}", ExistingID: ${existingSaveId}`);
   const db = await getDb();
@@ -82,35 +85,24 @@ export const saveGameToIndexedDB = async (
 
   let operation: IDBRequest;
   if (existingSaveId !== null && existingSaveId !== undefined) {
-    // If existingSaveId is string, try to parse, else use as is (if store uses string IDs)
     const idToUse = typeof existingSaveId === 'string' ? parseInt(existingSaveId, 10) : existingSaveId;
     if (isNaN(idToUse as number) && typeof existingSaveId === 'string') {
-        // console.warn(`[SAVE_DEBUG_DB] Attempting to use non-numeric ID "${existingSaveId}" for update. This might fail if store uses auto-incrementing numeric keys.`);
-        gameDataToStore.id = existingSaveId as string; // Keep original string ID
+        gameDataToStore.id = existingSaveId as string; 
     } else if (!isNaN(idToUse as number)) {
-         gameDataToStore.id = idToUse as number; // Use numeric ID for update
-    } else {
-        // existingSaveId was null/undefined or unparsable for numeric key, so treat as new add
-        // This case should be caught by `existingSaveId !== null` but added for safety
+         gameDataToStore.id = idToUse as number; 
     }
-    // console.log(`[SAVE_DEBUG_DB] Performing 'put' (update/insert) operation with ID: ${gameDataToStore.id}`);
-    operation = store.put(gameDataToStore); // .put() updates if key exists, adds if not.
+    operation = store.put(gameDataToStore); 
   } else {
-    // No existing ID, so it's a new save. 'id' will be auto-generated by IndexedDB.
-    // We must remove 'id' from gameDataToStore if it's undefined for 'add' to work with autoIncrement.
     const { id, ...dataWithoutId } = gameDataToStore;
-    // console.log("[SAVE_DEBUG_DB] Performing 'add' (new save) operation.");
     operation = store.add(dataWithoutId);
   }
 
   return new Promise<string>((resolve, reject) => {
     operation.onsuccess = () => {
-      // console.log("[SAVE_DEBUG_DB] Save/Update to IndexedDB successful. Resulting key:", operation.result);
       resolve(operation.result.toString());
     };
     operation.onerror = () => {
       const errorMsg = `Failed to save/update game locally. Details: ${operation.error?.message || 'Unknown error'}`;
-      // console.error('[SAVE_DEBUG_DB] Error saving/updating game to IndexedDB:', operation.error);
       reject(new Error(errorMsg));
     };
   });
@@ -150,7 +142,7 @@ export const loadGamesFromIndexedDB = async (): Promise<SaveGameMeta[]> => {
             size: estimatedSize,
           };
         })
-        .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()); // All saves, UI will decide how many to show or if needs slicing
+        .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()); 
       // console.log("[DEBUG_IDB] Processed and sorted saves:", saves);
       resolve(saves);
     };
@@ -183,7 +175,7 @@ export const loadSpecificGameFromIndexedDB = async (saveId: string): Promise<Sav
         const data = request.result as SaveGameData;
         resolve({
             ...data,
-            id: data.id?.toString(), // ensure ID is string
+            id: data.id?.toString(), 
             timestamp: new Date(data.timestamp) 
         });
       } else if (request.result) { 
@@ -239,8 +231,6 @@ export const deleteGameFromIndexedDB = async (saveId: string): Promise<void> => 
       } else { 
         const errorMsg = `Game save not found for key: ${keyToDelete}. Cannot delete. This might indicate the key was already deleted or never existed.`;
         // console.warn(`[DEBUG_DELETE_IDB] ${errorMsg}`);
-        // Consider resolving if not found, as the goal is for it to be gone. Or reject as "not found".
-        // For now, rejecting as it implies an issue if we expected it to be there.
         reject(new Error(errorMsg));
       }
     };
@@ -259,7 +249,6 @@ export const importGameToIndexedDB = async (
   // console.log("[DEBUG_IDB] importGameToIndexedDB called.");
   const db = await getDb();
   
-  // Fetch existing save names to handle collisions
   const existingSaves = await loadGamesFromIndexedDB();
   const existingNames = existingSaves.map(s => s.name);
 
@@ -276,8 +265,8 @@ export const importGameToIndexedDB = async (
   const store = transaction.objectStore(SAVES_STORE_NAME);
 
   const gameData: Omit<SaveGameData, 'id'> & { userId: string } = {
-    name: finalSaveName, // Use the generated unique name
-    timestamp: new Date(), // New timestamp for the imported save
+    name: finalSaveName, 
+    timestamp: new Date(), 
     knowledgeBase: { ...gameDataToImport.knowledgeBase, appVersion: APP_VERSION },
     gameMessages: gameDataToImport.gameMessages,
     appVersion: gameDataToImport.appVersion || APP_VERSION,
@@ -286,7 +275,7 @@ export const importGameToIndexedDB = async (
   // console.log("[DEBUG_IDB] Data prepared for import with unique name:", gameData);
 
   return new Promise<string>((resolve, reject) => {
-    const request = store.add(gameData); // ID will be auto-generated
+    const request = store.add(gameData); 
     // console.log("[DEBUG_IDB] Add request initiated for import.");
     request.onsuccess = () => {
       // console.log("[DEBUG_IDB] Import to IndexedDB successful. Resulting key:", request.result);
@@ -301,7 +290,6 @@ export const importGameToIndexedDB = async (
 };
 
 
-// Function to clear the IndexedDB promise for testing or re-initialization scenarios
 export const resetDBConnection = () => {
   // console.log("[DEBUG_IDB] Resetting IndexedDB connection promise.");
   dbPromise = null;

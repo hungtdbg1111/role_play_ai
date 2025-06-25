@@ -1,16 +1,18 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { GameScreen, KnowledgeBase, GameMessage, WorldSettings, PlayerStats, ApiConfig, FirebaseUser, SaveGameData, StorageType, FirebaseUserConfig, SaveGameMeta, RealmBaseStatDefinition, TurnHistoryEntry, StyleSettings, PlayerActionInputType } from './types';
+import { GameScreen, KnowledgeBase, GameMessage, WorldSettings, PlayerStats, ApiConfig, FirebaseUser, SaveGameData, StorageType, FirebaseUserConfig, SaveGameMeta, RealmBaseStatDefinition, TurnHistoryEntry, StyleSettings, PlayerActionInputType, EquipmentSlotId, Item as ItemType } from './types';
 import InitialScreen from './components/InitialScreen';
 import GameSetupScreen from './components/GameSetupScreen';
-import GameplayScreen from './components/GameplayScreen';
+import GameplayScreen from './components/GameplayScreen'; // Corrected path
+import EquipmentScreen from './components/gameplay/EquipmentScreen';
+import CraftingScreen from './components/gameplay/crafting/CraftingScreen'; // Added CraftingScreen
 import ApiSettingsScreen from './components/ApiSettingsScreen';
 import LoadGameScreen from './components/LoadGameScreen';
 import StorageSettingsScreen from './components/StorageSettingsScreen';
 import ImportExportScreen from './components/ImportExportScreen';
 import Spinner from './components/ui/Spinner';
 import Button from './components/ui/Button';
-import { INITIAL_KNOWLEDGE_BASE, VIETNAMESE, APP_VERSION, MAX_AUTO_SAVE_SLOTS, TURNS_PER_PAGE, DEFAULT_TIERED_STATS, MAX_TURN_HISTORY_LENGTH } from './constants';
+import { INITIAL_KNOWLEDGE_BASE, VIETNAMESE, APP_VERSION, MAX_AUTO_SAVE_SLOTS, TURNS_PER_PAGE, DEFAULT_TIERED_STATS, MAX_TURN_HISTORY_LENGTH, EQUIPMENT_SLOTS_CONFIG } from './constants';
 import { signOutUser, saveGameToFirestore, loadGamesFromFirestore, loadSpecificGameFromFirestore, deleteGameFromFirestore, importGameToFirestore } from './services/firebaseService';
 import { saveGameToIndexedDB, loadGamesFromIndexedDB, loadSpecificGameFromIndexedDB, deleteGameFromIndexedDB, importGameToIndexedDB } from './services/indexedDBService';
 import * as GameTemplates from './templates';
@@ -18,8 +20,10 @@ import { useAppInitialization } from './hooks/useAppInitialization';
 import { useGameNotifications } from './hooks/useGameNotifications';
 import { useGameData } from './hooks/useGameData';
 import { useGameActions } from './hooks/useGameActions';
-import { calculateStatsForRealm, getMessagesForPage as getMessagesForPageUtil } from './utils/gameLogicUtils'; // Keep utils that App still needs
-import { summarizeTurnHistory, getApiSettings as getGeminiApiSettings, countTokens } from './services/geminiService'; // For load game summary
+import { calculateRealmBaseStats, calculateEffectiveStats, getMessagesForPage, performTagProcessing } from './utils/gameLogicUtils'; 
+import { summarizeTurnHistory, getApiSettings as getGeminiApiSettings, countTokens, generateCraftedItemViaAI } from './services/geminiService'; 
+import { uploadImageToCloudinary } from './services/cloudinaryService';
+
 
 export const App: React.FC = () => {
   const [currentScreen, setCurrentScreen] = useState<GameScreen>(GameScreen.Initial);
@@ -56,15 +60,24 @@ export const App: React.FC = () => {
     totalPages,
     messageIdBeingEdited,
     setMessageIdBeingEdited,
-    getMessagesForPage, // This now comes from useGameData
+    getMessagesForPage: getMessagesForPageFromHook, 
     addMessageAndUpdateState,
     resetGameData
   } = useGameData();
 
-  const [isAutoPlaying, setIsAutoPlaying] = useState<boolean>(false); // Could be part of a useAutoPlay hook
+  const [sentCraftingPromptsLog, setSentCraftingPromptsLog] = useState<string[]>([]);
+  const [receivedCraftingResponsesLog, setReceivedCraftingResponsesLog] = useState<string[]>([]);
+  const [sentNpcAvatarPromptsLog, setSentNpcAvatarPromptsLog] = useState<string[]>([]); // New state
+
+  const [isAutoPlaying, setIsAutoPlaying] = useState<boolean>(false); 
   const [isSavingGame, setIsSavingGame] = useState<boolean>(false);
-  const [isAutoSaving, setIsAutoSaving] = useState<boolean>(false); // For auto-save notification/spinner
+  const [isAutoSaving, setIsAutoSaving] = useState<boolean>(false); 
   const [isSummarizingOnLoad, setIsSummarizingOnLoad] = useState<boolean>(false);
+  const [isCraftingItem, setIsCraftingItem] = useState<boolean>(false);
+
+  const logNpcAvatarPromptCallback = useCallback((prompt: string) => {
+    setSentNpcAvatarPromptsLog(prev => [prompt, ...prev].slice(0, 10));
+  }, []);
 
 
   const executeSaveGame = useCallback(async (
@@ -86,10 +99,6 @@ export const App: React.FC = () => {
         }
         if (!isAuto) {
             showNotification(VIETNAMESE.gameSavedSuccess + ` ("${saveName}")`, 'success');
-        } else {
-            // console.log(VIETNAMESE.autoSaveSuccess(saveName)); // Removed console log
-            // Optionally, show a less intrusive auto-save notification
-            // showNotification(VIETNAMESE.autoSaveSuccess(saveName), 'info'); 
         }
         return newSaveId;
     } catch (e) {
@@ -105,12 +114,13 @@ export const App: React.FC = () => {
 
   const {
     isLoadingApi,
+    setIsLoadingApi, 
     apiError, 
-    setApiError, // Added from useGameActions
+    setApiError, 
     isSummarizingNextPageTransition,
-    handleSetupComplete,
+    handleSetupComplete: originalHandleSetupComplete, 
     handlePlayerAction,
-  } = useGameActions({
+  } = useGameActions({ 
     knowledgeBase,
     setKnowledgeBase,
     gameMessages,
@@ -127,12 +137,44 @@ export const App: React.FC = () => {
     setIsAutoPlaying,
     executeSaveGame,
     storageType: storageSettings.storageType,
-    firebaseUser
+    firebaseUser,
+    logNpcAvatarPromptCallback // Pass new callback
   });
 
+  const handleSetupCompleteAppWrapper = useCallback(async (settings: WorldSettings, uploadedAvatarBase64Data?: string | null) => {
+    let finalSettings = { ...settings };
 
-  useEffect(() => { // Auto-play logic, moved from App.tsx's main body
-    let autoPlayTimeoutId: NodeJS.Timeout | undefined;
+    // If user uploaded a new avatar (base64 data exists)
+    if (uploadedAvatarBase64Data && uploadedAvatarBase64Data.startsWith('data:image')) { 
+      setIsLoadingApi(true); 
+      try {
+        const playerNameSlug = settings.playerName?.replace(/\s+/g, '_').toLowerCase() || `player_${Date.now()}`;
+        // Extract base64 string from data URL
+        const base64StringOnly = uploadedAvatarBase64Data.split(',')[1];
+        const cloudinaryUrl = await uploadImageToCloudinary(base64StringOnly, 'player', `player_${playerNameSlug}`);
+        finalSettings.playerAvatarUrl = cloudinaryUrl; // This will be used by originalHandleSetupComplete
+        console.log("Player avatar uploaded to Cloudinary:", cloudinaryUrl);
+      } catch (uploadError) {
+        console.error("Cloudinary upload failed for player avatar during setup complete:", uploadError);
+        showNotification("Lỗi tải ảnh đại diện lên Cloudinary. Sử dụng ảnh tạm thời (nếu có) hoặc không có ảnh.", "warning");
+        finalSettings.playerAvatarUrl = undefined; 
+      } finally {
+        setIsLoadingApi(false);
+      }
+    } else if (uploadedAvatarBase64Data) { 
+        // This case means uploadedAvatarBase64Data is already a URL (e.g., from AI gen, or random)
+        finalSettings.playerAvatarUrl = uploadedAvatarBase64Data;
+    }
+    // If uploadedAvatarBase64Data is null/undefined, finalSettings.playerAvatarUrl remains as it was (could be undefined or an AI generated one)
+    
+    // originalHandleSetupComplete will use finalSettings.playerAvatarUrl
+    await originalHandleSetupComplete(finalSettings); 
+
+  }, [originalHandleSetupComplete, setIsLoadingApi, showNotification]);
+
+
+  useEffect(() => { 
+    let autoPlayTimeoutId: number | undefined;
     if (isAutoPlaying && !isLoadingApi && !isSummarizingNextPageTransition && !isSummarizingOnLoad && currentScreen === GameScreen.Gameplay && currentPageDisplay === totalPages) {
       const latestMessageWithChoices = [...gameMessages].reverse().find(
         (msg) => msg.type === 'narration' && msg.choices && msg.choices.length > 0
@@ -152,9 +194,9 @@ export const App: React.FC = () => {
       }
 
       if (actionToTake) {
-        autoPlayTimeoutId = setTimeout(() => {
+        autoPlayTimeoutId = window.setTimeout(async () => { 
           if (isAutoPlaying && !isLoadingApi && !isSummarizingNextPageTransition && !isSummarizingOnLoad && currentScreen === GameScreen.Gameplay && currentPageDisplay === totalPages) {
-            handlePlayerAction(actionToTake!, isChoiceAction, actionType, 'default');
+            await handlePlayerAction(actionToTake!, isChoiceAction, actionType, 'default'); 
           }
         }, 1000); 
       }
@@ -235,8 +277,8 @@ export const App: React.FC = () => {
   };
 
   const handleLoadGame = async (saveId: string) => {
-    setIsSavingGame(true); // Using isSavingGame as a general "loading content" flag here. Could rename.
-    setApiError(null); // Clear previous API errors if any
+    setIsSavingGame(true); 
+    setApiError(null); 
     setIsSummarizingOnLoad(false); 
     try {
         let gameData: SaveGameData | null = null;
@@ -248,8 +290,23 @@ export const App: React.FC = () => {
         }
 
         if (gameData) {
-            setGameMessages(gameData.gameMessages); 
             let loadedKb = gameData.knowledgeBase;
+
+            if (loadedKb.turnHistory && Array.isArray(loadedKb.turnHistory)) {
+                loadedKb.turnHistory = loadedKb.turnHistory.map(entry => {
+                    if (entry.knowledgeBaseSnapshot && entry.knowledgeBaseSnapshot.turnHistory) {
+                        const { turnHistory: nestedHistory, ...cleanedSnapshot } = entry.knowledgeBaseSnapshot;
+                        return {
+                            ...entry,
+                            knowledgeBaseSnapshot: cleanedSnapshot as KnowledgeBase 
+                        };
+                    }
+                    return entry;
+                }).filter(Boolean); 
+            }
+
+            setGameMessages(gameData.gameMessages); 
+            
             loadedKb.autoSaveTurnCounter = loadedKb.autoSaveTurnCounter ?? 0;
             loadedKb.currentAutoSaveSlotIndex = loadedKb.currentAutoSaveSlotIndex ?? 0;
             loadedKb.autoSaveSlotIds = Array.isArray(loadedKb.autoSaveSlotIds) && loadedKb.autoSaveSlotIds.length === MAX_AUTO_SAVE_SLOTS 
@@ -257,6 +314,16 @@ export const App: React.FC = () => {
                 : Array(MAX_AUTO_SAVE_SLOTS).fill(null);
             loadedKb.manualSaveName = gameData.name || loadedKb.manualSaveName || loadedKb.worldConfig?.saveGameName || "Không Tên";
             loadedKb.manualSaveId = loadedKb.manualSaveId ?? (storageSettings.storageType === 'local' ? gameData.id : null) ?? null;
+            
+            if (loadedKb.worldConfig && loadedKb.worldConfig.playerAvatarUrl) {
+                loadedKb.playerAvatarData = loadedKb.worldConfig.playerAvatarUrl; 
+            } else if (loadedKb.playerAvatarData) { 
+                if(loadedKb.worldConfig) loadedKb.worldConfig.playerAvatarUrl = loadedKb.playerAvatarData;
+            } else {
+                 if(loadedKb.worldConfig) loadedKb.worldConfig.playerAvatarUrl = undefined;
+                 loadedKb.playerAvatarData = undefined;
+            }
+
 
             if (loadedKb.worldConfig?.heThongCanhGioi && (!loadedKb.realmProgressionList || loadedKb.realmProgressionList.length === 0)) {
                 loadedKb.realmProgressionList = loadedKb.worldConfig.heThongCanhGioi.split(' - ').map(s => s.trim()).filter(Boolean);
@@ -268,8 +335,11 @@ export const App: React.FC = () => {
                 });
                 loadedKb.currentRealmBaseStats = generatedBaseStats;
             }
-            const currentRealmStats = calculateStatsForRealm(loadedKb.playerStats.realm, loadedKb.realmProgressionList, loadedKb.currentRealmBaseStats);
-            loadedKb.playerStats = { ...loadedKb.playerStats, ...currentRealmStats };
+            
+            const baseRealmStats = calculateRealmBaseStats(loadedKb.playerStats.realm, loadedKb.realmProgressionList, loadedKb.currentRealmBaseStats);
+            loadedKb.playerStats = { ...loadedKb.playerStats, ...baseRealmStats };
+            loadedKb.playerStats = calculateEffectiveStats(loadedKb.playerStats, loadedKb.equippedItems, loadedKb.inventory);
+            
             loadedKb.playerStats.sinhLuc = Math.min(loadedKb.playerStats.sinhLuc, loadedKb.playerStats.maxSinhLuc);
             loadedKb.playerStats.linhLuc = Math.min(loadedKb.playerStats.linhLuc, loadedKb.playerStats.maxLinhLuc);
             loadedKb.playerStats.kinhNghiem = Math.min(loadedKb.playerStats.kinhNghiem, loadedKb.playerStats.maxKinhNghiem);
@@ -293,16 +363,15 @@ export const App: React.FC = () => {
                 const logSentPromptForLoad = (prompt: string) => {
                     setSentPromptsLog(prev => [prompt, ...prev].slice(0, 10));
                     const { model: currentModel } = getGeminiApiSettings();
-                    if (currentModel === 'gemini-1.5-flash') {
-                      setLatestPromptTokenCount('N/A (model)');
-                    } else {
+                    if (currentModel === 'gemini-2.5-flash-preview-04-17' || !currentModel.startsWith('gemini-1.5-flash')) {
                       setLatestPromptTokenCount('Đang tính...');
                       countTokens(prompt)
                         .then(count => setLatestPromptTokenCount(count))
                         .catch(err => {
-                          // console.warn("Could not count tokens for prompt:", err);
                           setLatestPromptTokenCount('Lỗi');
                         });
+                    } else {
+                         setLatestPromptTokenCount('N/A (model)');
                     }
                 };
                 const logSummarizationResponseForLoad = (response: string) => {
@@ -320,7 +389,9 @@ export const App: React.FC = () => {
                                 const summaryResult = await summarizeTurnHistory(
                                     messagesForSummary, 
                                     tempKb.worldConfig?.theme || "Không rõ", 
-                                    tempKb.worldConfig?.playerName || "Người chơi", 
+                                    tempKb.worldConfig?.playerName || "Người chơi",
+                                    tempKb.worldConfig?.genre,
+                                    tempKb.worldConfig?.customGenreName,
                                     logSentPromptForLoad,
                                     logSummarizationResponseForLoad
                                 );
@@ -328,7 +399,6 @@ export const App: React.FC = () => {
                                 tempKb.pageSummaries[pageNum] = summaryResult.processedSummary;
                                 tempKb.lastSummarizedTurn = Math.max(tempKb.lastSummarizedTurn || 0, endTurn);
                             } catch (summaryError) { 
-                                // console.error(`Error re-summarizing page ${pageNum} on load:`, summaryError); 
                             }
                          } else {
                             if (!tempKb.pageSummaries) tempKb.pageSummaries = {};
@@ -352,12 +422,11 @@ export const App: React.FC = () => {
         }
     } catch (e) {
         const errorMsg = VIETNAMESE.errorLoadingGame + (e instanceof Error ? `: ${e.message}` : '');
-        // console.error("Error in handleLoadGame:", e);
-        setApiError(errorMsg); // Use apiError state if it's general purpose
+        setApiError(errorMsg); 
         showNotification(errorMsg, 'error');
         setCurrentScreen(GameScreen.LoadGameSelection); 
     } finally {
-        setIsSavingGame(false); // Re-purpose for general loading flag
+        setIsSavingGame(false); 
         setIsSummarizingOnLoad(false); 
     }
   };
@@ -390,7 +459,6 @@ export const App: React.FC = () => {
       }
       showNotification(VIETNAMESE.dataImportedSuccess, 'success');
     } catch (e) {
-      // console.error("Error importing game in App.tsx:", e);
       throw e; 
     }
   };
@@ -409,26 +477,185 @@ export const App: React.FC = () => {
                  showNotification(VIETNAMESE.cannotRollbackFurther + " (Không thể lùi về trước khi truyện bắt đầu).", 'warning');
                  return;
             }
-            const lastHistoryEntry = knowledgeBase.turnHistory[knowledgeBase.turnHistory.length - 1];
-            setKnowledgeBase(lastHistoryEntry.knowledgeBaseSnapshot);
-            setGameMessages(lastHistoryEntry.gameMessagesSnapshot);
-            const rolledBackKb = lastHistoryEntry.knowledgeBaseSnapshot;
-            const newTotalPages = Math.max(1, rolledBackKb.currentPageHistory?.length || 1);
-            let newCurrentPage = newTotalPages; 
-            if (rolledBackKb.currentPageHistory) {
-                for (let i = rolledBackKb.currentPageHistory.length - 1; i >= 0; i--) {
-                    if (rolledBackKb.playerStats.turn >= rolledBackKb.currentPageHistory[i]) {
-                        newCurrentPage = i + 1;
-                        break;
+            
+            const currentTurnHistory = [...(knowledgeBase.turnHistory || [])];
+            const lastHistoryEntry = currentTurnHistory.pop(); 
+
+            if (lastHistoryEntry) {
+                const restoredKb = {
+                    ...lastHistoryEntry.knowledgeBaseSnapshot,
+                    turnHistory: currentTurnHistory 
+                };
+
+                setKnowledgeBase(restoredKb);
+                setGameMessages(lastHistoryEntry.gameMessagesSnapshot);
+                
+                const newTotalPages = Math.max(1, restoredKb.currentPageHistory?.length || 1);
+                let newCurrentPage = newTotalPages; 
+                if (restoredKb.currentPageHistory) {
+                    for (let i = restoredKb.currentPageHistory.length - 1; i >= 0; i--) {
+                        if (restoredKb.playerStats.turn >= restoredKb.currentPageHistory[i]) {
+                            newCurrentPage = i + 1;
+                            break;
+                        }
                     }
                 }
+                setCurrentPageDisplay(newCurrentPage);
+                showNotification(VIETNAMESE.rollbackSuccess, 'success');
+            } else {
+                 showNotification(VIETNAMESE.cannotRollbackFurther + " (Lỗi: Lịch sử rỗng sau khi pop).", 'warning');
             }
-            setCurrentPageDisplay(newCurrentPage);
-            showNotification(VIETNAMESE.rollbackSuccess, 'success');
         } else {
             showNotification(VIETNAMESE.cannotRollbackFurther, 'warning');
         }
     };
+
+  const handleUpdateEquipment = useCallback((slotId: EquipmentSlotId, itemIdToEquip: ItemType['id'] | null, previousItemIdInSlot: ItemType['id'] | null) => {
+    setKnowledgeBase(prevKb => {
+        const newKb = JSON.parse(JSON.stringify(prevKb)) as KnowledgeBase;
+        
+        newKb.equippedItems[slotId] = itemIdToEquip;
+
+        newKb.playerStats = calculateEffectiveStats(newKb.playerStats, newKb.equippedItems, newKb.inventory);
+
+        const itemToEquipObj = itemIdToEquip ? newKb.inventory.find(i => i.id === itemIdToEquip) : null;
+        const slotConfig = EQUIPMENT_SLOTS_CONFIG.find(s => s.id === slotId);
+        const slotName = slotConfig ? (VIETNAMESE[slotConfig.labelKey] as string) : slotId; 
+
+        if (itemToEquipObj) {
+            showNotification(VIETNAMESE.itemEquipped(itemToEquipObj.name, slotName), 'info');
+        } else if (previousItemIdInSlot) {
+            const unequippedItemObj = newKb.inventory.find(i => i.id === previousItemIdInSlot);
+            if (unequippedItemObj) {
+                 showNotification(VIETNAMESE.itemUnequipped(unequippedItemObj.name, slotName), 'info');
+            }
+        }
+        return newKb;
+    });
+  }, [showNotification, setKnowledgeBase]);
+
+  const handleCraftItem = useCallback(async (
+    desiredCategory: GameTemplates.ItemCategoryValues,
+    requirements: string,
+    materialIds: string[]
+  ) => {
+    setIsCraftingItem(true);
+    setApiError(null);
+
+    const materialsForPrompt = materialIds
+      .map(id => knowledgeBase.inventory.find(item => item.id === id && item.category === GameTemplates.ItemCategory.MATERIAL))
+      .filter(item => item !== undefined) as GameTemplates.MaterialTemplate[];
+
+    if (materialsForPrompt.length === 0 && materialIds.length > 0) {
+        showNotification("Lỗi: Không tìm thấy thông tin nguyên liệu đã chọn.", "error");
+        setIsCraftingItem(false);
+        return;
+    }
+    
+    const materialsPromptData = materialsForPrompt.map(m => ({
+        name: m.name,
+        description: m.description,
+        category: m.category, 
+        materialType: m.materialType
+    }));
+
+    try {
+        const { response: parsedAiResponse, rawText } = await generateCraftedItemViaAI(
+            desiredCategory,
+            requirements,
+            materialsPromptData,
+            knowledgeBase.playerStats, 
+            knowledgeBase.worldConfig?.playerName,
+            knowledgeBase.worldConfig?.genre, 
+            knowledgeBase.worldConfig?.isCultivationEnabled,
+            knowledgeBase.worldConfig?.customGenreName,
+            (prompt) => {
+                setSentCraftingPromptsLog(prev => [prompt, ...prev].slice(0, 10));
+            }
+        );
+        setReceivedCraftingResponsesLog(prev => [rawText, ...prev].slice(0,10));
+
+        let tempKb = JSON.parse(JSON.stringify(knowledgeBase)) as KnowledgeBase;
+        const messagesForCrafting: GameMessage[] = [];
+        
+        if (parsedAiResponse.narration && parsedAiResponse.narration.trim() !== "") {
+            messagesForCrafting.push({
+                id: `craft-desc-${Date.now()}`,
+                type: 'system', 
+                content: parsedAiResponse.narration.trim(),
+                timestamp: Date.now(), turnNumber: tempKb.playerStats.turn 
+            });
+        }
+        
+        const { newKb: kbAfterItemAcquired, systemMessagesFromTags } = await performTagProcessing(tempKb, parsedAiResponse.tags, tempKb.playerStats.turn, setKnowledgeBase, logNpcAvatarPromptCallback); 
+        tempKb = kbAfterItemAcquired;
+        
+        const acquiredItemName = parsedAiResponse.tags.find(tag => tag.toUpperCase().startsWith("[ITEM_ACQUIRED:"))?.match(/name="([^"]+)"/i)?.[1];
+
+        if (acquiredItemName) {
+             if (acquiredItemName === VIETNAMESE.craftingFailure || parsedAiResponse.tags.some(tag => tag.includes(VIETNAMESE.craftingFailure))) {
+                if (!parsedAiResponse.narration) { 
+                    messagesForCrafting.push({
+                        id: `craft-fail-msg-${Date.now()}`, type: 'system',
+                        content: VIETNAMESE.craftingFailure,
+                        timestamp: Date.now(), turnNumber: tempKb.playerStats.turn
+                    });
+                }
+                showNotification(VIETNAMESE.craftingFailure, 'warning');
+            } else {
+                 messagesForCrafting.push({
+                    id: `craft-success-msg-${Date.now()}`, type: 'system',
+                    content: VIETNAMESE.craftingSuccess(acquiredItemName),
+                    timestamp: Date.now(), turnNumber: tempKb.playerStats.turn
+                });
+                showNotification(VIETNAMESE.craftingSuccess(acquiredItemName), 'success');
+            }
+        } else if (!parsedAiResponse.narration && parsedAiResponse.tags.length === 0) { 
+             messagesForCrafting.push({
+                id: `craft-error-msg-${Date.now()}`, type: 'system',
+                content: VIETNAMESE.errorCraftingItem + " AI không trả về đúng định dạng.",
+                timestamp: Date.now(), turnNumber: tempKb.playerStats.turn
+            });
+            showNotification(VIETNAMESE.errorCraftingItem, 'error');
+        }
+        
+        const consumedMaterialsInfo: string[] = [];
+        materialsForPrompt.forEach(mat => {
+            const invIndex = tempKb.inventory.findIndex(i => i.id === mat.id);
+            if (invIndex > -1) {
+                tempKb.inventory[invIndex].quantity -= 1;
+                consumedMaterialsInfo.push(tempKb.inventory[invIndex].name);
+                if (tempKb.inventory[invIndex].quantity <= 0) {
+                    tempKb.inventory.splice(invIndex, 1);
+                }
+            }
+        });
+
+        if (consumedMaterialsInfo.length > 0) {
+             messagesForCrafting.push({
+                id: `craft-consume-${Date.now()}`, type: 'system',
+                content: VIETNAMESE.materialsConsumed(consumedMaterialsInfo.join(', ')),
+                timestamp: Date.now(), turnNumber: tempKb.playerStats.turn
+            });
+        }
+        
+        addMessageAndUpdateState(messagesForCrafting, tempKb);
+
+    } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        setApiError(errorMsg);
+        showNotification(`${VIETNAMESE.errorCraftingItem}: ${errorMsg}`, 'error');
+         addMessageAndUpdateState([{
+            id: `craft-exception-msg-${Date.now()}`, type: 'system',
+            content: `${VIETNAMESE.errorCraftingItem}: ${errorMsg}`,
+            timestamp: Date.now(), turnNumber: knowledgeBase.playerStats.turn
+        }], knowledgeBase);
+    } finally {
+        setIsCraftingItem(false);
+    }
+
+  }, [knowledgeBase, addMessageAndUpdateState, showNotification, setApiError, setReceivedCraftingResponsesLog, setSentCraftingPromptsLog, setKnowledgeBase, logNpcAvatarPromptCallback]);
+
 
   if (isInitialLoading) {
     return <div className="min-h-screen flex items-center justify-center bg-gray-900"><Spinner text="Đang tải và khởi tạo..." /></div>;
@@ -458,9 +685,9 @@ export const App: React.FC = () => {
         case GameScreen.GameSetup:
           return <GameSetupScreen 
                     setCurrentScreen={setCurrentScreen} 
-                    onSetupComplete={(settings) => {
-                        resetGameData(); // Reset data before starting new setup
-                        handleSetupComplete(settings);
+                    onSetupComplete={(settings, uploadedAvatarBase64Data) => { 
+                        resetGameData(); 
+                        handleSetupCompleteAppWrapper(settings, uploadedAvatarBase64Data); 
                     }} 
                  />;
         case GameScreen.Gameplay:
@@ -478,6 +705,9 @@ export const App: React.FC = () => {
                     sentPromptsLog={sentPromptsLog}
                     latestPromptTokenCount={latestPromptTokenCount}
                     summarizationResponsesLog={summarizationResponsesLog}
+                    sentCraftingPromptsLog={sentCraftingPromptsLog} 
+                    receivedCraftingResponsesLog={receivedCraftingResponsesLog}
+                    sentNpcAvatarPromptsLog={sentNpcAvatarPromptsLog} // Pass new log
                     firebaseUser={firebaseUser}
                     onSaveGame={handleSaveGame}
                     isSavingGame={isSavingGame}
@@ -489,21 +719,35 @@ export const App: React.FC = () => {
                     onGoToPrevPage={() => setCurrentPageDisplay(prev => Math.max(prev - 1, 1))}
                     onJumpToPage={(page) => setCurrentPageDisplay(Math.max(1, Math.min(page, totalPages)))}
                     isSummarizing={isSummarizingNextPageTransition || isSummarizingOnLoad}
-                    getMessagesForPage={(pageNum) => getMessagesForPageUtil(pageNum, knowledgeBase, gameMessages)}
+                    getMessagesForPage={(pageNum) => getMessagesForPageFromHook(pageNum)}
                     isCurrentlyActivePage={currentPageDisplay === totalPages}
                     onRollbackTurn={handleRollbackTurn}
                     isAutoPlaying={isAutoPlaying}
                     onToggleAutoPlay={handleToggleAutoPlay}
                     styleSettings={styleSettings}
                     onUpdateStyleSettings={(newSettings) => {
-                        setStyleSettings(newSettings); // This comes from useAppInitialization which handles localStorage
+                        setStyleSettings(newSettings); 
                         showNotification("Cài đặt hiển thị đã được cập nhật.", "success");
                     }}
                     messageIdBeingEdited={messageIdBeingEdited}
                     onStartEditMessage={handleStartEditMessage}
                     onSaveEditedMessage={handleSaveEditedMessage}
                     onCancelEditMessage={handleCancelEditMessage}
+                    setCurrentScreen={setCurrentScreen}
                  />;
+        case GameScreen.Equipment: 
+          return <EquipmentScreen
+                    knowledgeBase={knowledgeBase}
+                    setCurrentScreen={setCurrentScreen}
+                    onUpdateEquipment={handleUpdateEquipment}
+                 />;
+        case GameScreen.Crafting:
+          return <CraftingScreen
+                    knowledgeBase={knowledgeBase}
+                    setCurrentScreen={setCurrentScreen}
+                    onCraftItem={handleCraftItem}
+                    isCrafting={isCraftingItem}
+                  />;
         case GameScreen.ApiSettings:
           return <ApiSettingsScreen 
                     setCurrentScreen={setCurrentScreen} 
@@ -523,7 +767,7 @@ export const App: React.FC = () => {
             return <StorageSettingsScreen
                     setCurrentScreen={setCurrentScreen}
                     onSettingsSaved={(newSettings) => {
-                        setStorageSettings(newSettings); // This comes from useAppInitialization
+                        setStorageSettings(newSettings); 
                         reInitializeFirebase(newSettings.storageType === 'cloud' ? newSettings.firebaseUserConfig : null)
                             .then(() => {
                                  showNotification(VIETNAMESE.storageSettingsSavedMessage + (newSettings.storageType === 'cloud' ? " Thay đổi Firebase có thể cần tải lại trang." : ""), 'success');
@@ -562,11 +806,16 @@ export const App: React.FC = () => {
           {notification.message}
         </div>
       )}
-      {apiError && currentScreen === GameScreen.Gameplay && ( /* Example of displaying API error */
+      {apiError && currentScreen === GameScreen.Gameplay && ( 
          <div className="fixed top-5 left-1/2 -translate-x-1/2 p-3 bg-red-700 text-white rounded-md shadow-lg z-[100] text-xs max-w-md">
             Lỗi API: {apiError}
          </div>
       )}
+       {(isCraftingItem || (isLoadingApi && currentScreen === GameScreen.Crafting)) && ( 
+         <div className="fixed top-5 left-1/2 -translate-x-1/2 p-3 bg-blue-600 text-white rounded-md shadow-lg z-[100] text-xs max-w-md flex items-center">
+            <Spinner size="sm" className="mr-2 !h-4 !w-4" /> {isCraftingItem ? VIETNAMESE.craftingInProgress : VIETNAMESE.contactingAI}
+         </div>
+       )}
     </>
   );
 };

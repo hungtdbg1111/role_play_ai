@@ -1,7 +1,14 @@
-
 import { PlayerStats } from './types'; // PlayerStats will be defined in types.ts
 
-export type EquipmentRarity = "Phổ Thông" | "Hiếm" | "Quý Báu" | "Cực Phẩm" | "Thần Thoại" | "Chí Tôn";
+export const ItemRarity = {
+    PHO_THONG: "Phổ Thông",
+    HIEM: "Hiếm",
+    QUY_BAU: "Quý Báu",
+    CUC_PHAM: "Cực Phẩm",
+    THAN_THOAI: "Thần Thoại",
+    CHI_TON: "Chí Tôn"
+} as const;
+export type EquipmentRarity = typeof ItemRarity[keyof typeof ItemRarity];
 
 export const ItemCategory = {
     EQUIPMENT: "Equipment",
@@ -19,7 +26,8 @@ export const EquipmentType = {
     GIAP_TAY: "Giáp Tay",
     GIAP_CHAN: "Giáp Chân",
     TRANG_SUC: "Trang Sức",
-    PHAP_BAO: "Pháp Bảo"
+    PHAP_BAO: "Pháp Bảo",
+    THU_CUNG: "Thú Cưng" // Added Pet
 } as const;
 export type EquipmentTypeValues = typeof EquipmentType[keyof typeof EquipmentType];
 
@@ -79,13 +87,13 @@ export interface BaseItemTemplate {
 export interface EquipmentTemplate extends BaseItemTemplate {
     category: typeof ItemCategory.EQUIPMENT;
     equipmentType: EquipmentTypeValues;
-    slot?: string; // e.g., "Vũ Khí Chính", "Nhẫn", "Áo Giáp" - Made optional
-    statBonuses: Partial<PlayerStats>;
+    slot?: string; // e.g., "Vũ Khí Chính", "Nhẫn", "Áo Giáp", "Thú Cưng Đồng Hành" - Made optional
+    statBonuses: Partial<Omit<PlayerStats, 'realm' | 'currency' | 'isInCombat' | 'turn' | 'hieuUngBinhCanh' | 'baseMaxKinhNghiem' | 'baseMaxLinhLuc' | 'baseMaxSinhLuc' | 'baseSucTanCong' | 'activeStatusEffects' | 'sinhLuc' | 'linhLuc' | 'kinhNghiem'>>;
     uniqueEffects: string[]; // e.g., "Hút máu 5%", "Tăng 10% sát thương kỹ năng Hỏa"
     durability?: number;
     maxDurability?: number;
     levelRequirement?: number;
-    usable?: boolean; // Can this be "used" actively from inventory (e.g. a法宝 with an active effect)
+    usable?: boolean; // Can this be "used" actively from inventory (e.g. aPháp Bảo with an active effect)
     consumable?: boolean; // Is it consumed on use (typically false for equipment)
 }
 
@@ -94,7 +102,7 @@ export interface PotionTemplate extends BaseItemTemplate {
     potionType: PotionTypeValues;
     effects: string[]; // e.g., "Hồi 100 HP", "Tăng 20 ATK trong 3 lượt", "Giải trừ trúng độc"
     durationTurns?: number;
-    isConsumedOnUse: true;
+    isConsumedOnUse: true; // Explicitly true for potions
     cooldownTurns?: number; // Cooldown before another potion of this type can be used
     usable: true; // Potions are inherently usable
     consumable: true; // Potions are inherently consumable
@@ -129,11 +137,17 @@ export interface NPCTemplate {
     id: string;
     name: string;
     title?: string; // e.g., "Trưởng Lão", "Thợ Rèn"
+    gender?: 'Nam' | 'Nữ' | 'Khác' | 'Không rõ'; 
     description: string; // Detailed backstory, role in world
     personalityTraits: string[]; // e.g., "Hào hiệp", "Tham lam", "Nhút nhát"
     affinity: number; // -100 to 100, player's standing with this NPC
     factionId?: string; // ID of the Faction they belong to
-    stats?: Partial<PlayerStats>; // If combat capable (hp, atk will be used from here if present)
+    avatarUrl?: string; // Placeholder, random URL, or Cloudinary URL
+    
+    realm?: string; // NPC's cultivation realm or level descriptor
+    baseStatOverrides?: Partial<Pick<PlayerStats, 'baseMaxSinhLuc' | 'baseMaxLinhLuc' | 'baseSucTanCong' | 'baseMaxKinhNghiem'>>; // For AI to specify non-standard base stats for their realm
+    stats?: Partial<PlayerStats>; // For current stats (like current HP) or further specific overrides to calculated stats.
+    
     skills?: string[]; // IDs of skills they can use
     inventoryIds?: string[]; // IDs of items they might carry or drop
     shopInventoryIds?: string[]; // If they are a merchant
@@ -141,9 +155,7 @@ export interface NPCTemplate {
     questGiverForIds?: string[]; // IDs of quests this NPC can assign
     isEssential?: boolean; // Cannot be killed if true
     locationId?: string; // Current or default location
-    // Fields from old NPC type if not directly mapped:
-    hp?: number; // Kept for simplicity if stats object is not provided by AI
-    atk?: number; // Kept for simplicity
+    level?: number; // Optional general level, if not using realm system or for non-combat scaling
 }
 
 export interface SkillTemplate {
@@ -153,15 +165,15 @@ export interface SkillTemplate {
     skillType: SkillTypeValues; // Broad category
     detailedEffect: string; // Detailed effect description, maps to old 'effect'
     icon?: string;
-    manaCost: number;
-    damageMultiplier: number; // Multiplier for player's ATK. For "atk*scale"
-    baseDamage: number;
-    healingAmount: number;
+    manaCost: number; // Default to 0 if not specified
+    damageMultiplier: number; // Multiplier for player's ATK. For "atk*scale". Default 0.
+    baseDamage: number; // Default 0
+    healingAmount: number; // Default 0
     buffsApplied?: Array<{ stat: keyof PlayerStats | string; amount: number | string; durationTurns: number; chance?: number }>;
     debuffsApplied?: Array<{ stat: keyof PlayerStats | string; amount: number | string; durationTurns: number; chance?: number }>;
     otherEffects?: string[]; // Text descriptions of other effects, e.g., "Gây choáng", "Đẩy lùi"
     targetType?: SkillTargetType; // Optional, AI might not specify
-    cooldown?: number; // Renamed from cooldownTurns for consistency
+    cooldown?: number; // Renamed from cooldownTurns for consistency, default 0
     currentCooldown?: number; // Tracks current cooldown
     levelRequirement?: number;
     requiredRealm?: string;
