@@ -26,15 +26,24 @@ export const calculateRealmBaseStats = (
     let mainRealmName = "";
     let subRealmName = "";
     
-    const sortedMainRealmList = [...mainRealmList].sort((a,b) => b.length - a.length);
+    // Attempt to match realmString as a main realm directly
+    const directMainRealmMatch = mainRealmList.find(mr => mr.trim() === realmString.trim());
 
-    for (const potentialMainRealm of sortedMainRealmList) {
-        if (realmString.startsWith(potentialMainRealm)) {
-            const remainingPart = realmString.substring(potentialMainRealm.length).trim();
-            if (SUB_REALM_NAMES.includes(remainingPart)) {
-                mainRealmName = potentialMainRealm;
-                subRealmName = remainingPart;
-                break;
+    if (directMainRealmMatch) {
+        mainRealmName = directMainRealmMatch;
+        // Assume it's the peak of this main realm if no sub-realm is specified
+        subRealmName = SUB_REALM_NAMES[SUB_REALM_NAMES.length - 1]; 
+    } else {
+        // Original parsing logic if not a direct main realm match
+        const sortedMainRealmList = [...mainRealmList].sort((a,b) => b.length - a.length);
+        for (const potentialMainRealm of sortedMainRealmList) {
+            if (realmString.startsWith(potentialMainRealm)) {
+                const remainingPart = realmString.substring(potentialMainRealm.length).trim();
+                if (SUB_REALM_NAMES.includes(remainingPart)) {
+                    mainRealmName = potentialMainRealm;
+                    subRealmName = remainingPart;
+                    break;
+                }
             }
         }
     }
@@ -42,11 +51,10 @@ export const calculateRealmBaseStats = (
     const fallbackTierDefinition = DEFAULT_TIERED_STATS[0] || { hpBase: 10, hpInc: 1, mpBase: 10, mpInc: 1, atkBase: 1, atkInc: 0, expBase: 10, expInc: 1 };
 
     if (!mainRealmName || !subRealmName) {
-        // Only log warning if it's not the expected "Không rõ" or a known mortal realm that might not parse like others
+        // This warning log will only show if the realm string is truly unparsable or not a direct main realm match.
         if (realmString !== "Không rõ" && realmString !== VIETNAMESE.mortalRealmName && realmString !== DEFAULT_MORTAL_STATS.realm) {
             console.warn(`Invalid realm components in "${realmString}". Main: "${mainRealmName}", Sub: "${subRealmName}". Using default stats for first tier.`);
         }
-        // For "Không rõ" or other unparsable (but possibly valid like Mortal) realms, return fallback numeric stats
         return {
             baseMaxKinhNghiem: fallbackTierDefinition.expBase,
             baseMaxSinhLuc: fallbackTierDefinition.hpBase,
@@ -56,6 +64,18 @@ export const calculateRealmBaseStats = (
     }
     
     const subRealmIndex = SUB_REALM_NAMES.indexOf(subRealmName);
+    
+    if (subRealmIndex === -1) {
+        // This case should be rare now with the directMainRealmMatch logic, but it's a safeguard.
+        console.warn(`Invalid sub-realm component "${subRealmName}" for main realm "${mainRealmName}" in "${realmString}". Using default stats for first tier of this main realm (or overall default).`);
+         let tierDefinitionForError = currentRealmBaseStatsMap[mainRealmName] || fallbackTierDefinition;
+         return {
+            baseMaxKinhNghiem: tierDefinitionForError.expBase,
+            baseMaxSinhLuc: tierDefinitionForError.hpBase,
+            baseMaxLinhLuc: tierDefinitionForError.mpBase,
+            baseSucTanCong: tierDefinitionForError.atkBase,
+        };
+    }
     
     let tierDefinition = currentRealmBaseStatsMap[mainRealmName];
     if (!tierDefinition) {
