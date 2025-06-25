@@ -1,40 +1,14 @@
 
 import { 
-  CLOUDINARY_CLOUD_NAME, 
-  CLOUDINARY_API_KEY as FALLBACK_CLOUDINARY_API_KEY, 
-  CLOUDINARY_API_SECRET as FALLBACK_CLOUDINARY_API_SECRET,
+  CLOUDINARY_CLOUD_NAME,
   CLOUDINARY_FOLDER_PLAYER,
   CLOUDINARY_FOLDER_NPC_MALE,
   CLOUDINARY_FOLDER_NPC_WOMEN
 } from '../constants';
 
-// Helper function to convert ArrayBuffer to hex string
-async function bufferToHex(buffer: ArrayBuffer): Promise<string> {
-  const byteArray = new Uint8Array(buffer);
-  const hexCodes = [...byteArray].map(value => {
-    const hexCode = value.toString(16);
-    return hexCode.padStart(2, '0');
-  });
-  return hexCodes.join('');
-}
-
-// Helper function to generate SHA-1 signature
-async function generateSha1Signature(paramsToSign: Record<string, string | number>, apiSecret: string): Promise<string> {
-  const sortedKeys = Object.keys(paramsToSign).sort();
-  let stringToSign = sortedKeys
-    .map(key => `${key}=${paramsToSign[key]}`)
-    .join('&');
-  stringToSign += apiSecret;
-
-  const encoder = new TextEncoder();
-  const data = encoder.encode(stringToSign);
-  const hashBuffer = await crypto.subtle.digest('SHA-1', data);
-  return bufferToHex(hashBuffer);
-}
-
 /**
- * Uploads a base64 encoded image string to Cloudinary using a signed upload.
- * @param base64ImageString The raw base64 string of the image data.
+ * Uploads a base64 encoded image string to Cloudinary using a server-generated signature.
+ * @param base64ImageString The raw base64 string of the image data (without data:image/png;base64, prefix).
  * @param type Determines which folder to use ('player', 'npc_male', 'npc_female').
  * @param publicId Optional public_id for the uploaded image in Cloudinary.
  * @returns A Promise that resolves to the secure_url of the uploaded image.
@@ -46,33 +20,11 @@ export async function uploadImageToCloudinary(
   publicId?: string
 ): Promise<string> {
 
-  // Get Cloudinary credentials
-  // Priority: Environment Variable > Constants
-  const effectiveCloudinaryApiKey = process.env.CLOUDINARY_API_KEY || FALLBACK_CLOUDINARY_API_KEY;
-  const effectiveCloudinaryApiSecret = process.env.CLOUDINARY_API_SECRET || FALLBACK_CLOUDINARY_API_SECRET;
-  const effectiveCloudinaryCloudName = CLOUDINARY_CLOUD_NAME; // Cloud name is always from constants.ts
-
-  // Check if essential config is missing
-  if (!effectiveCloudinaryCloudName || !effectiveCloudinaryApiKey || !effectiveCloudinaryApiSecret) {
-    const missingParts: string[] = [];
-    if (!effectiveCloudinaryCloudName) missingParts.push("Cloud Name (từ constants.ts)");
-    if (!effectiveCloudinaryApiKey) missingParts.push("API Key (từ process.env.CLOUDINARY_API_KEY hoặc constants.ts)");
-    if (!effectiveCloudinaryApiSecret) missingParts.push("API Secret (từ process.env.CLOUDINARY_API_SECRET hoặc constants.ts)");
-    
-    const errorMessage = `Cloudinary configuration (${missingParts.join(', ')}) is missing. Cannot upload image.`;
+  const effectiveCloudinaryCloudName = CLOUDINARY_CLOUD_NAME;
+  if (!effectiveCloudinaryCloudName) {
+    const errorMessage = "Cloudinary Cloud Name (từ constants.ts) is missing. Cannot upload image.";
     console.error(errorMessage);
-    throw new Error(`Cloudinary configuration (${missingParts.join(', ')}) chưa được cấu hình.`);
-  }
-  
-  // Warning for placeholder values if constants are being used as fallback AND they are placeholders
-  const usingApiKeyFromConstants = !process.env.CLOUDINARY_API_KEY;
-  const usingApiSecretFromConstants = !process.env.CLOUDINARY_API_SECRET;
-
-  if (
-      (usingApiKeyFromConstants && String(FALLBACK_CLOUDINARY_API_KEY) === 'YOUR_CLOUDINARY_API_KEY') || // Compare with FALLBACK
-      (usingApiSecretFromConstants && String(FALLBACK_CLOUDINARY_API_SECRET) === 'YOUR_CLOUDINARY_API_SECRET') // Compare with FALLBACK
-  ) {
-      console.warn("Cloudinary API Key/Secret đang sử dụng giá trị placeholder từ constants.ts. Vui lòng cập nhật chúng trong constants.ts hoặc đặt biến môi trường (CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET) để Cloudinary hoạt động chính xác.");
+    throw new Error(errorMessage);
   }
 
   let folderName: string;
@@ -80,13 +32,12 @@ export async function uploadImageToCloudinary(
     folderName = CLOUDINARY_FOLDER_PLAYER;
   } else if (type === 'npc_male') {
     folderName = CLOUDINARY_FOLDER_NPC_MALE;
-  } else { // npc_female (maps to npc_women folder)
+  } else { // npc_female
     folderName = CLOUDINARY_FOLDER_NPC_WOMEN;
   }
   
   const timestamp = Math.round(Date.now() / 1000);
-
-  const paramsToSign: Record<string, string | number> = {
+  const paramsToSignForNetlify: Record<string, string | number> = {
     timestamp: timestamp,
     folder: folderName,
   };
@@ -94,22 +45,44 @@ export async function uploadImageToCloudinary(
   let sanitizedPublicId: string | undefined = undefined;
   if (publicId) {
     sanitizedPublicId = publicId.replace(/[\/\?&#%<>]/g, '_');
-    paramsToSign.public_id = sanitizedPublicId;
+    paramsToSignForNetlify.public_id = sanitizedPublicId;
   }
   
-  // Use effectiveCloudinaryApiSecret for signature
-  const signature = await generateSha1Signature(paramsToSign, effectiveCloudinaryApiSecret);
+  let signatureData;
+  try {
+    // Call the Netlify function to get the signature
+    const sigResponse = await fetch('/.netlify/functions/generate-cloudinary-signature', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ paramsToSign: paramsToSignForNetlify }),
+    });
+
+    if (!sigResponse.ok) {
+      const errorBody = await sigResponse.text();
+      console.error("Failed to get signature from Netlify function:", sigResponse.status, errorBody);
+      throw new Error(`Lỗi lấy chữ ký Cloudinary từ server: ${sigResponse.statusText} - ${errorBody}`);
+    }
+    signatureData = await sigResponse.json();
+    if (!signatureData.signature || !signatureData.apiKey || typeof signatureData.timestamp === 'undefined') {
+      throw new Error("Phản hồi chữ ký không hợp lệ từ server. Thiếu signature, apiKey, hoặc timestamp.");
+    }
+  } catch (error) {
+    console.error('Error fetching signature from Netlify function:', error);
+    throw new Error(`Không thể lấy chữ ký Cloudinary: ${(error as Error).message}`);
+  }
 
   const url = `https://api.cloudinary.com/v1_1/${effectiveCloudinaryCloudName}/image/upload`;
   
-  const dataUri = `data:image/png;base64,${base64ImageString}`;
+  // Ensure the base64 string is prefixed for Cloudinary direct upload
+  const dataUri = base64ImageString.startsWith('data:image') ? base64ImageString : `data:image/png;base64,${base64ImageString}`;
 
   const formData = new FormData();
   formData.append('file', dataUri); 
-  // Use effectiveCloudinaryApiKey for the form data
-  formData.append('api_key', effectiveCloudinaryApiKey);
-  formData.append('timestamp', timestamp.toString());
-  formData.append('signature', signature);
+  formData.append('api_key', signatureData.apiKey); // Use API key from server response
+  formData.append('timestamp', String(signatureData.timestamp)); // Use timestamp from server response
+  formData.append('signature', signatureData.signature); // Use signature from server response
   formData.append('folder', folderName);
 
   if (sanitizedPublicId) {

@@ -306,21 +306,21 @@ export const MALE_AVATAR_PLACEHOLDER_URL = "https://via.placeholder.com/150/7777
 
 // Cloudinary Constants
 export const CLOUDINARY_CLOUD_NAME = 'dropcqgvd'; // Provided by user
-// **QUAN TRỌNG:** Điền API Key và API Secret của bạn vào đây. 
-// **CẢNH BÁO BẢO MẬT:** Không bao giờ đưa API Secret lên Git repository công khai.
-// Chỉ nên giữ ở local hoặc sử dụng biến môi trường cho production.
-export const CLOUDINARY_API_KEY = ''; // <<< THAY BẰNG API KEY CỦA BẠN
-export const CLOUDINARY_API_SECRET = ''; // <<< THAY BẰNG API SECRET CỦA BẠN
+
+// **QUAN TRỌNG:** Cloudinary API Key và API Secret KHÔNG NÊN lưu trữ ở đây nếu sử dụng Netlify Functions.
+// Thay vào đó, chúng nên được đặt làm BIẾN MÔI TRƯỜNG trong cài đặt Netlify của bạn:
+// - CLOUDINARY_API_KEY
+// - CLOUDINARY_API_SECRET
+// Netlify Function (generate-cloudinary-signature.ts) sẽ đọc các biến môi trường này.
+// Các giá trị dưới đây chỉ nên được coi là FALLBACK cho local dev nếu env vars không được set,
+// và KHÔNG BAO GIỜ commit API Secret thật vào Git repository công khai.
+export const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY || '1111'; // Fallback for local dev
+export const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || '1111'; // Fallback for local dev - DO NOT COMMIT REAL SECRET
 
 // Tên thư mục mới cho Cloudinary uploads
 export const CLOUDINARY_FOLDER_PLAYER = 'ai_rpg_avatars_player';
 export const CLOUDINARY_FOLDER_NPC_MALE = 'ai_rpg_avatars_npc_male';
 export const CLOUDINARY_FOLDER_NPC_WOMEN = 'ai_rpg_avatars_npc_women';
-
-
-// Upload presets không còn được sử dụng trực tiếp bởi `cloudinaryService` nếu dùng signed uploads
-// export const CLOUDINARY_UPLOAD_PRESET_NPC = 'ai_rpg_avatars_npc'; 
-// export const CLOUDINARY_UPLOAD_PRESET_PLAYER = 'ai_rpg_avatars_player';
 
 
 // Re-export the translations and prompts
@@ -436,7 +436,7 @@ export const VIETNAMESE = {
     aiAvatarPromptRequiredError: "Vui lòng nhập mô tả cho ảnh đại diện để AI tạo.",
     autoGenerateNpcAvatarsLabel: "Tự động tạo ảnh NPC bằng AI (dùng Gemini & Cloudinary)",
     autoGenerateNpcAvatarsInfo: "Khi bật, hệ thống sẽ cố gắng tạo ảnh đại diện cho NPC mới dựa trên mô tả của họ và lưu trữ trên Cloudinary. Nếu tắt, ảnh NPC sẽ được chọn ngẫu nhiên (nếu có) hoặc dùng placeholder.",
-    cloudinaryInfo: "Để sử dụng tính năng lưu trữ ảnh trên Cloudinary với API Key, bạn cần điền Cloudinary Cloud Name, API Key và API Secret vào file constants.ts. CẢNH BÁO: Việc lưu API Secret ở client rất nguy hiểm, chỉ dùng cho phát triển.",
+    cloudinaryInfo: "Để sử dụng tính năng lưu trữ ảnh trên Cloudinary, bạn cần cấu hình Cloudinary Cloud Name trong constants.ts và đặt CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET làm biến môi trường trong Netlify. Việc lưu trữ API Secret ở client-side (trong constants.ts) rất không an toàn và chỉ nên dùng làm fallback tạm thời cho local development.",
     geminiImageModelLabel: "Chọn Model Tạo Ảnh (Cho Avatar)", // New translation
 };
 
