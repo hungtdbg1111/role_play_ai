@@ -309,8 +309,8 @@ export const CLOUDINARY_CLOUD_NAME = 'dropcqgvd'; // Provided by user
 // **QUAN TRỌNG:** Điền API Key và API Secret của bạn vào đây. 
 // **CẢNH BÁO BẢO MẬT:** Không bao giờ đưa API Secret lên Git repository công khai.
 // Chỉ nên giữ ở local hoặc sử dụng biến môi trường cho production.
-// export const CLOUDINARY_API_KEY = '981233443712136'; // <<< THAY BẰNG API KEY CỦA BẠN
-// export const CLOUDINARY_API_SECRET = 'lSQR0j2BdJKPSPxf89J1kUwWYDk'; // <<< THAY BẰNG API SECRET CỦA BẠN
+export const CLOUDINARY_API_KEY = ''; // <<< THAY BẰNG API KEY CỦA BẠN
+export const CLOUDINARY_API_SECRET = ''; // <<< THAY BẰNG API SECRET CỦA BẠN
 
 // Tên thư mục mới cho Cloudinary uploads
 export const CLOUDINARY_FOLDER_PLAYER = 'ai_rpg_avatars_player';
