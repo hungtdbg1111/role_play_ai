@@ -205,8 +205,8 @@ export const AVAILABLE_MODELS = [
 export const DEFAULT_MODEL_ID = AVAILABLE_MODELS[0].id; // Updated default to recommended model
 
 export const AVAILABLE_IMAGE_MODELS = [
-  { id: 'imagen-3.0-generate-002', name: 'Imagen 3.0 (Khuyến Nghị cho Avatar)' },
-  { id: 'gemini-2.0-flash-preview-image-generation', name: 'Gemini 2.0 Flash Image Gen (Thay thế)' }
+  { id: 'gemini-2.0-flash-preview-image-generation', name: 'Gemini 2.0 Flash Image Gen' },
+  { id: 'imagen-3.0-generate-002', name: 'Imagen 3.0 (Hiện không chạy được vì mất phí)' }
 ];
 export const DEFAULT_IMAGE_MODEL_ID = AVAILABLE_IMAGE_MODELS[0].id;
 
@@ -254,7 +254,7 @@ export const DEFAULT_STORAGE_SETTINGS: StorageSettings = {
 
 // Style Settings Constants
 export const STYLE_SETTINGS_STORAGE_KEY = 'daoDoAiStyleSettings_v1';
-export const AVAILABLE_FONTS = ['Bookerly', 'Inter', 'Arial', 'Verdana', 'Times New Roman', 'Courier New', 'Georgia', 'Comic Sans MS', 'inherit'];
+export const AVAILABLE_FONTS = ['Inter', 'Arial', 'Verdana', 'Bookerly', 'Times New Roman', 'Courier New', 'Georgia', 'Comic Sans MS', 'inherit'];
 export const AVAILABLE_FONT_SIZES = ['12px', '13px', '14px', '15px', '16px', '17px', '18px', '20px', '22px', '24px', 'inherit'];
 
 export const DEFAULT_STYLE_SETTINGS: StyleSettings = {
