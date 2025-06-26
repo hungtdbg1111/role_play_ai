@@ -312,11 +312,8 @@ export const MALE_AVATAR_PLACEHOLDER_URL = "https://via.placeholder.com/150/7777
 // Cloudinary Constants
 export const CLOUDINARY_CLOUD_NAME = 'dropcqgvd'; 
 
-// IMPORTANT: Cloudinary API Key and Secret are primarily for use in Netlify Functions (server-side signing).
-// Fallbacks here are for local development ONLY IF the Netlify function is not being used locally.
-// DO NOT COMMIT YOUR REAL API SECRET TO A PUBLIC GIT REPOSITORY.
-export const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY || '1111'; 
-export const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || '1111'; 
+// CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET are removed from here.
+// They should be set as environment variables for the Netlify function.
 
 // Tên thư mục mới cho Cloudinary uploads
 export const CLOUDINARY_FOLDER_PLAYER = 'ai_rpg_avatars_player';

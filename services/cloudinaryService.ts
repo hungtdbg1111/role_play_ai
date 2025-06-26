@@ -59,21 +59,40 @@ export async function uploadImageToCloudinary(
     });
 
     if (!sigResponse.ok) {
-      const errorBody = await sigResponse.json();
-      throw new Error(`Failed to get signature from server: ${sigResponse.status} ${sigResponse.statusText}. Details: ${errorBody?.message || 'Unknown server error'}`);
+      let errorBodyText = `Server responded with ${sigResponse.status} ${sigResponse.statusText}.`;
+      try {
+        // Attempt to parse as JSON first, as the function *should* return JSON errors.
+        const errorBodyJson = await sigResponse.json(); 
+        errorBodyText += ` Details: ${errorBodyJson?.message || JSON.stringify(errorBodyJson) || 'Unknown server error content.'}`;
+      } catch (jsonError) {
+        // If parsing as JSON fails, it means the Netlify function returned non-JSON (e.g., HTML error page, empty response).
+        try {
+            const textResponse = await sigResponse.text(); // Try to get the raw text response.
+            errorBodyText += ` Raw response: ${textResponse || '(empty response body)'}`;
+        } catch (textError) {
+            // If even getting text fails, just note that.
+            errorBodyText += ` Could not retrieve error body text.`;
+        }
+      }
+      throw new Error(`Failed to get signature from server. ${errorBodyText}`);
     }
-    const sigData = await sigResponse.json();
+    
+    const sigData = await sigResponse.json(); // This line should now be safer after the !sigResponse.ok check.
     signature = sigData.signature;
     apiKeyToUse = sigData.apiKey;
     timestampToUse = sigData.timestamp; // Use timestamp from server response to ensure consistency
     
     if (!signature || !apiKeyToUse || typeof timestampToUse !== 'number') {
-        throw new Error("Invalid signature data received from server.");
+        throw new Error("Invalid signature data received from server. Signature, API key, or timestamp missing/invalid.");
     }
 
   } catch (error) {
     console.error("Error fetching Cloudinary signature:", error);
     const userMessage = error instanceof Error ? error.message : "Lỗi kết nối đến dịch vụ ký Cloudinary.";
+    // Avoid redundant "Failed to get signature from server" if it's already in the message from the !sigResponse.ok block
+    if (error instanceof Error && error.message.startsWith("Failed to get signature from server")) {
+        throw error;
+    }
     throw new Error(`Không thể lấy chữ ký Cloudinary: ${userMessage}`);
   }
   
