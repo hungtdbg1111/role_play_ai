@@ -315,8 +315,8 @@ export const CLOUDINARY_CLOUD_NAME = 'dropcqgvd';
 // IMPORTANT: Cloudinary API Key and Secret are primarily for use in Netlify Functions (server-side signing).
 // Fallbacks here are for local development ONLY IF the Netlify function is not being used locally.
 // DO NOT COMMIT YOUR REAL API SECRET TO A PUBLIC GIT REPOSITORY.
-export const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY || '981233443712136'; 
-export const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || 'lSQR0j2BdJKPSPxf89J1kUwWYDk'; 
+export const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY || '1111'; 
+export const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || '1111'; 
 
 // Tên thư mục mới cho Cloudinary uploads
 export const CLOUDINARY_FOLDER_PLAYER = 'ai_rpg_avatars_player';
