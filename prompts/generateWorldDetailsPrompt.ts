@@ -1,23 +1,30 @@
 
-import { SUB_REALM_NAMES, ALL_FACTION_ALIGNMENTS, AVAILABLE_GENRES, VIETNAMESE, CUSTOM_GENRE_VALUE } from '../constants'; 
+import { SUB_REALM_NAMES, ALL_FACTION_ALIGNMENTS, AVAILABLE_GENRES, VIETNAMESE, CUSTOM_GENRE_VALUE, DEFAULT_VIOLENCE_LEVEL, DEFAULT_STORY_TONE, VIOLENCE_LEVELS, STORY_TONES, DEFAULT_NSFW_DESCRIPTION_STYLE, NSFW_DESCRIPTION_STYLES } from '../constants';
 import * as GameTemplates from '../templates';
-import { GenreType } from '../types';
+import { GenreType, ViolenceLevel, StoryTone, NsfwDescriptionStyle } from '../types';
 
 export const generateWorldDetailsPrompt = (
-    storyIdea: string, 
-    isNsfwIdea: boolean, 
-    genre: GenreType, 
+    storyIdea: string,
+    isNsfwIdea: boolean,
+    genre: GenreType,
     isCultivationEnabled: boolean,
-    customGenreName?: string
+    violenceLevel: ViolenceLevel, 
+    storyTone: StoryTone,       
+    customGenreName?: string,
+    nsfwStyle?: NsfwDescriptionStyle 
 ): string => {
   const effectiveGenreDisplay = (genre === CUSTOM_GENRE_VALUE && customGenreName) ? customGenreName : genre;
-  const genreForTag = (genre === CUSTOM_GENRE_VALUE && customGenreName) ? CUSTOM_GENRE_VALUE : genre; // Store the original selection
+  const genreForTag = (genre === CUSTOM_GENRE_VALUE && customGenreName) ? CUSTOM_GENRE_VALUE : genre;
   const customGenreNameForTag = (genre === CUSTOM_GENRE_VALUE && customGenreName) ? customGenreName : "";
-  
+  const currentViolenceLevel = violenceLevel || DEFAULT_VIOLENCE_LEVEL;
+  const currentStoryTone = storyTone || DEFAULT_STORY_TONE;
+  const currentNsfwStyle = nsfwStyle || DEFAULT_NSFW_DESCRIPTION_STYLE;
+
+
   const cultivationSystemInstructions = isCultivationEnabled ? `
     *   **Tạo Hệ Thống Cảnh Giới:** (Ví dụ: "Phàm Nhân - Luyện Khí - Trúc Cơ - Kim Đan - Nguyên Anh - Hóa Thần - Luyện Hư - Hợp Thể - Đại Thừa - Độ Kiếp...").
         **QUAN TRỌNG: Hệ thống cảnh giới PHẢI bắt đầu bằng "Phàm Nhân" (hoặc một tên tương đương cho cấp độ凡人, ví dụ: "Người Thường Luyện Thể"). Cảnh giới "Phàm Nhân" này cũng có 10 cấp độ phụ như ${SUB_REALM_NAMES.join(', ')}.**
-        Hãy thay đổi các cảnh giới sau "Phàm Nhân" để phù hợp hơn với bối cảnh và thể loại "${effectiveGenreDisplay}". Phải có ít nhất 5 đại cảnh giới (bao gồm "Phàm Nhân") được tạo ra nếu thể loại là Tu Tiên/Tiên Hiệp. Với các thể loại khác có sức mạnh (Võ Hiệp, Huyền Huyễn), hãy tạo hệ thống cấp bậc/danh hiệu tương ứng, với cấp thấp nhất tương đương "Phàm Nhân".
+        Hãy thay đổi các cảnh giới sau "Phàm Nhân" để phù hợp hơn với bối cảnh và thể loại "${effectiveGenreDisplay}". Phải có ít nhất 10 đại cảnh giới (bao gồm "Phàm Nhân") được tạo ra nếu thể loại là Tu Tiên/Tiên Hiệp. Với các thể loại khác có sức mạnh (Võ Hiệp, Huyền Huyễn), hãy tạo hệ thống cấp bậc/danh hiệu tương ứng, với cấp thấp nhất tương đương "Phàm Nhân".
         [GENERATED_HE_THONG_CANH_GIOI: text="Hệ thống cảnh giới/cấp bậc do AI tạo, bắt đầu bằng Phàm Nhân, phân cách bằng dấu ' - '"]
     *   **Tạo Cảnh Giới Khởi Đầu:** (Phải là một cấp độ cụ thể trong hệ thống trên, theo định dạng "[Tên Cảnh Giới Lớn] [Tên Cảnh Giới Nhỏ]", ví dụ: "Phàm Nhân Nhất Trọng", "Phàm Nhân Đỉnh Phong", hoặc "Học徒 Võ Sĩ". KHÔNG được rút gọn tên cảnh giới lớn. **Cảnh giới khởi đầu cho nhân vật chính PHẢI LÀ một cấp độ của "Phàm Nhân".**)
         [GENERATED_CANH_GIOI_KHOI_DAU: text="Cảnh giới/cấp độ khởi đầu do AI tạo, thuộc cảnh giới Phàm Nhân"]
@@ -27,18 +34,48 @@ export const generateWorldDetailsPrompt = (
         [GENERATED_CANH_GIOI_KHOI_DAU: text="${VIETNAMESE.mortalRealmName}"]
 `;
 
-  const skillTypeExamples = isCultivationEnabled 
-    ? `(vd: ${Object.values(GameTemplates.SkillType).join(' | ')})` 
+  const skillTypeExamples = isCultivationEnabled
+    ? `(vd: ${Object.values(GameTemplates.SkillType).join(' | ')})`
     : `(vd: Kỹ năng Chiến Đấu, Kỹ năng Xã Hội, Kỹ năng Sinh Tồn, Kỹ năng Nghề Nghiệp tùy theo thể loại "${effectiveGenreDisplay}")`;
 
   const skillExample = isCultivationEnabled
     ? `[GENERATED_SKILL: name="Hỏa Cầu Thuật", description="Tạo ra một quả cầu lửa nhỏ tấn công kẻ địch, tiêu hao 5 mana. Loại kỹ năng: ${GameTemplates.SkillType.CHUDONG_TANCONG}"]`
     : (effectiveGenreDisplay === "Võ Hiệp" ? `[GENERATED_SKILL: name="Thiết Sa Chưởng", description="Một chưởng pháp cơ bản, tăng lực tay khi tấn công. Loại kỹ năng: Kỹ năng Võ Thuật"]` : `[GENERATED_SKILL: name="Thương Lượng Giá Cả", description="Khả năng mặc cả tốt hơn khi mua bán. Loại kỹ năng: Kỹ năng Xã Hội"]`);
 
-  const npcRealmInstruction = isCultivationEnabled 
-    ? `, realm="Cảnh giới NPC (BẮT BUỘC nếu có tu luyện. PHẢI là một cảnh giới hợp lệ từ Hệ Thống Cảnh Giới đã tạo ở trên, ví dụ 'Phàm Nhân Tam Trọng', 'Luyện Khí Nhất Trọng'. Nếu NPC là một người thường hoàn toàn không tu luyện trong thế giới tu luyện, hãy dùng cảnh giới là '${VIETNAMESE.mortalRealmName}'. Nếu Hệ Thống Cảnh Giới đã được định nghĩa bắt đầu bằng 'Phàm Nhân', thì một NPC tu luyện cấp thấp có thể là 'Phàm Nhân [cấp độ]', còn một người dân thường sẽ là '${VIETNAMESE.mortalRealmName}'.)", baseStatOverridesJSON='{"baseMaxSinhLuc":120}' (TÙY CHỌN, để ghi đè chỉ số cơ bản cho cảnh giới này), statsJSON='{"sinhLuc":100, "sucTanCong":15}' (TÙY CHỌN, để ghi đè các chỉ số hiện tại)`
+  const npcRealmInstruction = isCultivationEnabled
+    ? `, realm="Cảnh giới NPC (BẮT BUỘC nếu có tu luyện. PHẢI là một cảnh giới hợp lệ từ Hệ Thống Cảnh Giới đã tạo ở trên, ví dụ 'Phàm Nhân Tam Trọng', 'Luyện Khí Nhất Trọng'. Nếu NPC là một người thường hoàn toàn không tu luyện trong thế giới tu luyện, hãy dùng cảnh giới là '${VIETNAMESE.mortalRealmName}'. Nếu Hệ Thống Cảnh Giới đã được định nghĩa bắt đầu bằng 'Phàm Nhân', thì một NPC cấp thấp có thể là 'Phàm Nhân [cấp độ]'.)`
     : `, statsJSON='{"sinhLuc":100, "sucTanCong":15}' (TÙY CHỌN, ví dụ hp, atk cho người thường)`;
 
+  let nsfwGuidanceForWorldGen = "";
+  if (isNsfwIdea) {
+    const violenceGuidanceText = VIETNAMESE[`violenceLevelGuidance${currentViolenceLevel.replace(/\s+/g, '')}` as keyof typeof VIETNAMESE] || VIETNAMESE.violenceLevelGuidanceThucTe;
+    const storyToneGuidanceText = VIETNAMESE[`storyToneGuidance${currentStoryTone.replace(/\s+/g, '')}` as keyof typeof VIETNAMESE] || VIETNAMESE.storyToneGuidanceTrungTinh;
+    let nsfwStyleSpecificGuidance = "";
+    switch(currentNsfwStyle) {
+        case 'Hoa Mỹ': nsfwStyleSpecificGuidance = VIETNAMESE.nsfwGuidanceHoaMy; break;
+        case 'Trần Tục': nsfwStyleSpecificGuidance = VIETNAMESE.nsfwGuidanceTranTuc; break;
+        case 'Gợi Cảm': nsfwStyleSpecificGuidance = VIETNAMESE.nsfwGuidanceGoiCam; break;
+        case 'Mạnh Bạo (BDSM)': nsfwStyleSpecificGuidance = VIETNAMESE.nsfwGuidanceManhBaoBDSM; break;
+        default: nsfwStyleSpecificGuidance = VIETNAMESE.nsfwGuidanceHoaMy;
+    }
+
+
+    nsfwGuidanceForWorldGen = `
+- **Yêu cầu nội dung 18+:** BẬT. Hãy chủ động, ưu tiên và tích cực tạo ra các tên gọi, mô tả, tính cách, chi tiết NPC, kỹ năng, vật phẩm, và tri thức thế giới mang tính chất người lớn, nhạy cảm, và tình dục.
+- **Phong Cách Miêu Tả Tình Dục (Người dùng chọn):** ${currentNsfwStyle}.
+  ${nsfwStyleSpecificGuidance}
+- **Mức Độ Bạo Lực (Người dùng chọn):** ${currentViolenceLevel}.
+  ${violenceGuidanceText}
+- **Tông Màu Câu Chuyện (Người dùng chọn):** ${currentStoryTone}.
+  ${storyToneGuidanceText}
+Khi tạo các yếu tố thế giới (NPC, kỹ năng, vật phẩm, địa điểm, tri thức), hãy đảm bảo chúng phản ánh sự kết hợp của các lựa chọn 18+, phong cách miêu tả, mức độ bạo lực, và tông màu câu chuyện này.
+Ví dụ, nếu chọn phong cách "Mạnh Bạo (BDSM)", bạo lực "Cực Đoan" và tông "Đen Tối", các NPC có thể tàn bạo hơn, kỹ năng có thể ghê rợn hơn, vật phẩm có thể mang tính hủy diệt, và tri thức thế giới có thể u ám hơn. Ngược lại, nếu chọn phong cách "Hoa Mỹ", bạo lực "Nhẹ Nhàng" và "Tích Cực", các yếu tố nên tươi sáng hơn, dù vẫn có thể mang yếu tố 18+ tinh tế nếu được yêu cầu.
+[GENERATED_NSFW_DESCRIPTION_STYLE: text="${currentNsfwStyle}"]
+[GENERATED_VIOLENCE_LEVEL: text="${currentViolenceLevel}"]
+[GENERATED_STORY_TONE: text="${currentStoryTone}"]`;
+  } else {
+    nsfwGuidanceForWorldGen = "- **Yêu cầu nội dung 18+:** TẮT. Vui lòng tạo các yếu tố phù hợp với mọi lứa tuổi, tập trung vào phiêu lưu và phát triển nhân vật. Tránh các chủ đề nhạy cảm, bạo lực quá mức hoặc tình dục khi tạo các yếu tố này.";
+  }
 
 return `
 Bạn là một chuyên gia sáng tạo thế giới cho game nhập vai thể loại "${effectiveGenreDisplay}" bằng tiếng Việt.
@@ -49,11 +86,7 @@ ${isCultivationEnabled ? `Mỗi cảnh giới lớn (bao gồm cả "Phàm Nhân
 "${storyIdea}"
 
 **CHẾ ĐỘ NỘI DUNG CHO VIỆC TẠO YẾU TỐ KHỞI ĐẦU:**
-- Yêu cầu nội dung 18+ (dâm dục, bạo lực): ${isNsfwIdea ? "BẬT" : "TẮT"}
-${isNsfwIdea
-  ? "LƯU Ý QUAN TRỌNG: Yêu cầu nội dung 18+ đã được BẬT cho việc tạo các yếu tố thế giới. Hãy chủ động, ưu tiên và tích cực tạo ra các tên gọi, mô tả, tính cách, chi tiết NPC, kỹ năng, vật phẩm, và tri thức thế giới mang tính chất người lớn, nhạy cảm, dâm dục và bạo lực một cách chi tiết và rõ ràng. Hãy mạnh dạn đưa ra những gợi ý 18+ cho các yếu tố này. Ưu tiên cho yếu tố tình dục hơn so với bạo lực."
-  : "LƯU Ý QUAN TRỌNG: Yêu cầu nội dung 18+ đã được TẮT. Vui lòng tạo các yếu tố phù hợp với mọi lứa tuổi, tập trung vào phiêu lưu và phát triển nhân vật. Tránh các chủ đề nhạy cảm, bạo lực quá mức hoặc tình dục khi tạo các yếu tố này."
-}
+${nsfwGuidanceForWorldGen}
 - Thể loại game: ${effectiveGenreDisplay}
 - Hệ Thống Tu Luyện/Sức Mạnh Đặc Thù: ${isCultivationEnabled ? "BẬT" : "TẮT"}
 

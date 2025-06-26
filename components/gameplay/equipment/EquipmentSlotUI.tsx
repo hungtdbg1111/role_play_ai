@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { Item, EquipmentSlotId, EquipmentSlotConfig } from '../../../types';
 import { VIETNAMESE } from '../../../constants';
@@ -11,6 +12,8 @@ interface EquipmentSlotUIProps {
   isDraggingOver: boolean;
   onDragEnterSlot: (slotId: EquipmentSlotId) => void;
   onDragLeaveSlot: () => void;
+  onClick: (slotId: EquipmentSlotId, targetElement: HTMLDivElement) => void; // Added for click-to-equip
+  isHighlighted: boolean; // Added for drag highlight
 }
 
 const EquipmentSlotUI: React.FC<EquipmentSlotUIProps> = ({
@@ -20,7 +23,9 @@ const EquipmentSlotUI: React.FC<EquipmentSlotUIProps> = ({
   onDragStartFromSlot,
   isDraggingOver,
   onDragEnterSlot,
-  onDragLeaveSlot
+  onDragLeaveSlot,
+  onClick,
+  isHighlighted,
 }) => {
   const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault(); // Necessary to allow dropping
@@ -34,13 +39,8 @@ const EquipmentSlotUI: React.FC<EquipmentSlotUIProps> = ({
     
     if (itemId && itemCategory === GameTemplates.ItemCategory.EQUIPMENT && slotConfig.accepts.includes(equipmentType)) {
         onDropItem(slotConfig.id, itemId);
-    } else {
-        // Optionally provide feedback for invalid drop type
-        console.warn(`Cannot drop item type "${equipmentType}" into slot "${slotConfig.labelKey}" which accepts "${slotConfig.accepts.join(', ')}"`);
-        // You could use a notification system here:
-        // notify(VIETNAMESE.cannotEquipItem(itemId, slotLabel, VIETNAMESE.invalidItemTypeForSlot), 'error');
     }
-    onDragLeaveSlot(); // Reset dragging over state
+    onDragLeaveSlot(); 
   };
 
   const handleDragStart = (event: React.DragEvent<HTMLDivElement>) => {
@@ -51,38 +51,49 @@ const EquipmentSlotUI: React.FC<EquipmentSlotUIProps> = ({
 
   const slotLabel = (VIETNAMESE[slotConfig.labelKey] as string) || slotConfig.id;
 
+  const handleClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    onClick(slotConfig.id, event.currentTarget);
+  };
+  
+  let borderClass = 'border-gray-600 hover:border-indigo-500';
+  if (isDraggingOver) {
+    borderClass = 'border-green-500 bg-green-700/30 ring-2 ring-green-400';
+  } else if (isHighlighted) {
+    borderClass = 'border-yellow-400 bg-yellow-800/20 ring-1 ring-yellow-300 ring-offset-1 ring-offset-gray-900';
+  }
+
+
   return (
     <div
-      className={`w-24 h-24 sm:w-28 sm:h-28 border-2 rounded-lg flex flex-col items-center justify-center p-1 text-center transition-all duration-150 relative
-                  ${isDraggingOver ? 'border-green-500 bg-green-700/30 ring-2 ring-green-400' : 'border-gray-600 bg-gray-700/50 hover:border-indigo-500'}
-                  ${equippedItem ? 'cursor-grab' : 'cursor-default'}`}
+      className={`w-24 h-24 sm:w-28 sm:h-28 border-2 rounded-lg flex flex-col items-center justify-between p-1 text-center transition-all duration-150 relative group ${borderClass} ${equippedItem ? 'cursor-grab' : 'cursor-pointer hover:bg-gray-700/70'}`}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
       onDragEnter={() => onDragEnterSlot(slotConfig.id)}
       onDragLeave={onDragLeaveSlot}
       draggable={!!equippedItem}
       onDragStart={handleDragStart}
+      onClick={handleClick}
       title={equippedItem ? `${equippedItem.name} (${slotLabel})` : slotLabel}
       aria-label={slotLabel}
     >
       {equippedItem ? (
         <>
-          <span className="text-xs font-semibold text-indigo-300 truncate w-full px-1 mt-1">{equippedItem.name}</span>
-          <span className="text-[10px] text-gray-400 truncate w-full px-1">{equippedItem.rarity}</span>
-           {equippedItem.category === GameTemplates.ItemCategory.EQUIPMENT && (
-             <span className="text-[10px] text-gray-500 truncate w-full px-1 mb-3">
-               {(equippedItem as GameTemplates.EquipmentTemplate).equipmentType}
-             </span>
-           )}
+          <div className="flex-grow flex flex-col items-center justify-center w-full mt-1">
+            <span className="text-xs font-semibold text-indigo-300 truncate w-full px-1">{equippedItem.name}</span>
+            <span className="text-[10px] text-gray-400 truncate w-full px-1">{equippedItem.rarity}</span>
+            {equippedItem.category === GameTemplates.ItemCategory.EQUIPMENT && (
+              <span className="text-[9px] text-gray-500 truncate w-full px-1">
+                {(equippedItem as GameTemplates.EquipmentTemplate).equipmentType}
+              </span>
+            )}
+          </div>
         </>
       ) : (
-        // Display slot label prominently when empty
-        <span className="text-sm font-medium text-gray-400 px-1">{slotLabel}</span>
+        <span className="text-sm font-medium text-gray-400 px-1 flex items-center justify-center h-full">{VIETNAMESE.emptySlot}</span>
       )}
-      {/* Keep a smaller label at the bottom for consistency or if item name is too long */}
       <span 
-        className="text-xs text-gray-500 absolute bottom-1 left-0 right-0 text-center truncate px-1"
-        title={slotLabel} // Ensure full label is visible on hover if truncated
+        className="text-[10px] text-gray-500 group-hover:text-indigo-400 absolute bottom-0.5 left-0 right-0 text-center truncate px-1"
+        title={slotLabel} 
       >
         {slotLabel}
       </span>

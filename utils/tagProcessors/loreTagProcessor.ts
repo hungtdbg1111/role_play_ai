@@ -4,7 +4,7 @@ import { NPCTemplate } from '../../templates';
 import { ALL_FACTION_ALIGNMENTS, VIETNAMESE, DEFAULT_MORTAL_STATS, FEMALE_AVATAR_BASE_URL, MAX_FEMALE_AVATAR_INDEX, MALE_AVATAR_PLACEHOLDER_URL } from '../../constants';
 import * as GameTemplates from '../../templates';
 import { calculateRealmBaseStats } from '../statsCalculationUtils'; 
-import { getApiSettings, generateImageUnified } from '../../services/geminiService'; // Updated import
+import { getApiSettings, generateImageUnified } from '../../services/geminiService'; 
 import { uploadImageToCloudinary } from '../../services/cloudinaryService'; 
 
 export const processNpc = async (
@@ -12,7 +12,7 @@ export const processNpc = async (
     tagParams: Record<string, string>,
     turnForSystemMessages: number,
     setKnowledgeBaseDirectly: React.Dispatch<React.SetStateAction<KnowledgeBase>>,
-    logNpcAvatarPromptCallback?: (prompt: string) => void // New callback
+    logNpcAvatarPromptCallback?: (prompt: string) => void 
 ): Promise<{ updatedKb: KnowledgeBase; systemMessages: GameMessage[] }> => {
     const newKb = JSON.parse(JSON.stringify(currentKb)) as KnowledgeBase;
     const systemMessages: GameMessage[] = [];
@@ -78,14 +78,13 @@ export const processNpc = async (
     }
     
     const apiSettings = getApiSettings();
-    const npcIdToUpdate = npcToProcess.id; // Capture ID for async closure
+    const npcIdToUpdate = npcToProcess.id; 
 
     if (apiSettings.autoGenerateNpcAvatars && (isNewNpc || !npcToProcess.avatarUrl || npcToProcess.avatarUrl.startsWith('https://via.placeholder.com') || npcToProcess.avatarUrl.includes('FEMALE_AVATAR_BASE_URL_placeholder'))) {
         
-        // Set initial placeholder immediately
         if (!npcToProcess.avatarUrl || npcToProcess.avatarUrl.startsWith('https://via.placeholder.com') || npcToProcess.avatarUrl.includes('FEMALE_AVATAR_BASE_URL_placeholder')) {
             npcToProcess.avatarUrl = npcToProcess.gender === 'Nữ'
-                ? `${FEMALE_AVATAR_BASE_URL}${Math.floor(Math.random() * MAX_FEMALE_AVATAR_INDEX) + 1}.png` // Temp random
+                ? `${FEMALE_AVATAR_BASE_URL}${Math.floor(Math.random() * MAX_FEMALE_AVATAR_INDEX) + 1}.png` 
                 : MALE_AVATAR_PLACEHOLDER_URL;
         }
         systemMessages.push({
@@ -94,7 +93,6 @@ export const processNpc = async (
             timestamp: Date.now(), turnNumber: turnForSystemMessages
         });
         
-        // Fire and forget async avatar generation
         (async () => {
           let cloudinaryUrl: string | undefined;
           let avatarError: Error | undefined;
@@ -121,13 +119,13 @@ export const processNpc = async (
             }
           } catch (err) {
             avatarError = err instanceof Error ? err : new Error(String(err));
-            console.error(`Async avatar generation for NPC ${npcIdToUpdate} failed:`, avatarError);
+            console.error(`Async avatar generation for NPC ${npcIdToUpdate} failed:`, avatarError); // Keep console error for async operation
           } finally {
             setKnowledgeBaseDirectly(prevKb => {
                 const updatedNPCs = prevKb.discoveredNPCs.map(n =>
                     n.id === npcIdToUpdate ? { ...n, avatarUrl: cloudinaryUrl || (npcToProcess.gender === 'Nữ' ? `${FEMALE_AVATAR_BASE_URL}${Math.floor(Math.random() * MAX_FEMALE_AVATAR_INDEX) + 1}.png` : MALE_AVATAR_PLACEHOLDER_URL) } : n
                 );
-                console.log(`Avatar for ${npcName}: ${cloudinaryUrl || (avatarError ? 'Error - ' + avatarError.message : 'Generated, no URL/Error in generation')}`);
+                // console.log(`Avatar for ${npcName}: ${cloudinaryUrl || (avatarError ? 'Error - ' + avatarError.message : 'Generated, no URL/Error in generation')}`);
                 return { ...prevKb, discoveredNPCs: updatedNPCs };
             });
           }
@@ -214,7 +212,7 @@ export const processNpcUpdate = async (
     tagParams: Record<string, string>,
     turnForSystemMessages: number,
     setKnowledgeBaseDirectly: React.Dispatch<React.SetStateAction<KnowledgeBase>>,
-    logNpcAvatarPromptCallback?: (prompt: string) => void // New callback
+    logNpcAvatarPromptCallback?: (prompt: string) => void 
 ): Promise<{ updatedKb: KnowledgeBase; systemMessages: GameMessage[] }> => {
     const newKb = JSON.parse(JSON.stringify(currentKb)) as KnowledgeBase;
     const systemMessages: GameMessage[] = [];
@@ -228,7 +226,7 @@ export const processNpcUpdate = async (
     const npcIndex = newKb.discoveredNPCs.findIndex(n => n.name === npcName);
     if (npcIndex > -1) {
         const npcToUpdate = newKb.discoveredNPCs[npcIndex];
-        const npcIdToUpdate = npcToUpdate.id; // For async closure
+        const npcIdToUpdate = npcToUpdate.id; 
         if (!npcToUpdate.stats) npcToUpdate.stats = {}; 
         let updatedFieldsCount = 0;
         let realmUpdated = false;
@@ -366,7 +364,7 @@ export const processNpcUpdate = async (
                     const updatedNPCs = prevKb.discoveredNPCs.map(n =>
                         n.id === npcIdToUpdate ? { ...n, avatarUrl: finalAvatarUrlForUpdate } : n
                     );
-                    console.log(`Avatar for ${npcToUpdate.name} (update): ${cloudinaryUrl || (avatarError ? 'Error - ' + avatarError.message : 'Generated, no URL/Error in generation')}`);
+                    // console.log(`Avatar for ${npcToUpdate.name} (update): ${cloudinaryUrl || (avatarError ? 'Error - ' + avatarError.message : 'Generated, no URL/Error in generation')}`);
                     return { ...prevKb, discoveredNPCs: updatedNPCs };
                 });
               }
@@ -381,7 +379,7 @@ export const processNpcUpdate = async (
             });
         }
     } else {
-        console.warn(`NPC_UPDATE: NPC "${npcName}" not found.`);
+        console.warn(`NPC_UPDATE: NPC "${npcName}" not found. Attempting to process as new NPC.`);
         return processNpc(currentKb, tagParams, turnForSystemMessages, setKnowledgeBaseDirectly, logNpcAvatarPromptCallback);
     }
     return { updatedKb: newKb, systemMessages };
@@ -418,6 +416,8 @@ export const processLoreLocation = (
             content: `Khám phá ra địa điểm mới: ${locationName}.`,
             timestamp: Date.now(), turnNumber: turnForSystemMessages
         });
+    } else {
+        console.warn(`LORE_LOCATION: Location "${locationName}" already exists. Not adding duplicate.`);
     }
     return { updatedKb: newKb, systemMessages };
 };
@@ -457,13 +457,14 @@ export const processLocationUpdate = (
             locToUpdate.regionId = tagParams.regionId;
             updatedFieldsCount++;
         }
-        // Add other updatable fields here
         if (updatedFieldsCount > 0) {
             systemMessages.push({
                 id: `location-updated-${locToUpdate.id}`, type: 'system',
                 content: `Thông tin địa điểm "${locationName}" đã được cập nhật.`,
                 timestamp: Date.now(), turnNumber: turnForSystemMessages
             });
+        } else {
+            console.warn(`LOCATION_UPDATE: No valid fields to update for location "${locationName}".`);
         }
     } else {
         console.warn(`LOCATION_UPDATE: Location "${locationName}" not found.`);
@@ -497,6 +498,8 @@ export const processWorldLoreAdd = (
             content: `Tri thức mới được thêm: ${title}.`,
             timestamp: Date.now(), turnNumber: turnForSystemMessages
         });
+    } else {
+         console.warn(`WORLD_LORE_ADD: Lore with title "${title}" already exists. Not adding duplicate.`);
     }
     return { updatedKb: newKb, systemMessages };
 };
@@ -532,6 +535,8 @@ export const processWorldLoreUpdate = (
                 content: `Tri thức "${title}" đã được cập nhật.`,
                 timestamp: Date.now(), turnNumber: turnForSystemMessages
             });
+        } else {
+            console.warn(`WORLD_LORE_UPDATE: No valid fields to update for lore "${title}".`);
         }
     } else {
          console.warn(`WORLD_LORE_UPDATE: Lore with title "${title}" not found.`);
@@ -569,6 +574,8 @@ export const processFactionDiscovered = (
             content: `Bạn đã khám phá ra phe phái mới: ${name}.`,
             timestamp: Date.now(), turnNumber: turnForSystemMessages
         });
+    } else {
+        console.warn(`FACTION_DISCOVERED: Faction "${name}" already exists. Not adding duplicate.`);
     }
     return { updatedKb: newKb, systemMessages };
 };
@@ -617,15 +624,18 @@ export const processFactionUpdate = (
             if (!isNaN(newRep)) {
                 factionToUpdate.playerReputation = Math.max(-100, Math.min(100, newRep));
                 updatedFieldsCount++;
+            } else {
+                 console.warn(`FACTION_UPDATE: Invalid playerReputation value "${repStr}" for faction "${name}".`);
             }
         }
-        // Add other updatable fields like leader, baseLocation, allies, enemies
         if (updatedFieldsCount > 0) {
              systemMessages.push({
                 id: `faction-updated-${factionToUpdate.id}`, type: 'system',
                 content: `Thông tin phe phái "${name}" đã được cập nhật.`,
                 timestamp: Date.now(), turnNumber: turnForSystemMessages
             });
+        } else {
+            console.warn(`FACTION_UPDATE: No valid fields to update for faction "${name}".`);
         }
     } else {
         console.warn(`FACTION_UPDATE: Faction "${name}" not found.`);

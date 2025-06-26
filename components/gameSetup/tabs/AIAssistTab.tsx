@@ -1,15 +1,14 @@
 import React, { ChangeEvent, useRef } from 'react';
-import { WorldSettings, GenreType } from '../../../types';
+import { WorldSettings, GenreType, NsfwDescriptionStyle, ViolenceLevel, StoryTone } from '../../../types';
 import Button from '../../ui/Button';
 import InputField from '../../ui/InputField';
-import { VIETNAMESE, MAX_TOKENS_FANFIC, CUSTOM_GENRE_VALUE } from '../../../constants';
+import { VIETNAMESE, MAX_TOKENS_FANFIC, CUSTOM_GENRE_VALUE, NSFW_DESCRIPTION_STYLES, VIOLENCE_LEVELS, STORY_TONES, DEFAULT_NSFW_DESCRIPTION_STYLE, DEFAULT_VIOLENCE_LEVEL, DEFAULT_STORY_TONE } from '../../../constants';
 
 interface AIAssistTabProps {
-  settings: WorldSettings; // For genre, isCultivationEnabled, customGenreName
+  settings: WorldSettings; 
+  handleChange: (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => void;
   storyIdea: string;
   setStoryIdea: (value: string) => void;
-  isOriginalStoryIdeaNsfw: boolean;
-  setIsOriginalStoryIdeaNsfw: (value: boolean) => void;
   handleGenerateFromStoryIdea: () => void;
   isGeneratingDetails: boolean;
 
@@ -23,8 +22,6 @@ interface AIAssistTabProps {
   isLoadingTokens: boolean;
   fanficPlayerDescription: string;
   setFanficPlayerDescription: (value: string) => void;
-  isFanficIdeaNsfw: boolean;
-  setIsFanficIdeaNsfw: (value: boolean) => void;
   handleGenerateFromFanfic: () => void;
   isGeneratingFanficDetails: boolean;
 
@@ -37,20 +34,38 @@ interface AIAssistTabProps {
 
 const AIAssistTab: React.FC<AIAssistTabProps> = ({
   settings,
+  handleChange,
   storyIdea, setStoryIdea,
-  isOriginalStoryIdeaNsfw, setIsOriginalStoryIdeaNsfw,
   handleGenerateFromStoryIdea, isGeneratingDetails,
   fanficSourceType, setFanficSourceType,
   fanficStoryName, setFanficStoryName,
   fanficFile, handleFanficFileChange,
   fanficTokenCount, isLoadingTokens,
   fanficPlayerDescription, setFanficPlayerDescription,
-  isFanficIdeaNsfw, setIsFanficIdeaNsfw,
   handleGenerateFromFanfic, isGeneratingFanficDetails,
   originalStorySummary, handleOriginalStorySummaryChange,
   showOriginalStorySummaryInput, setShowOriginalStorySummaryInput,
   fanficFileInputRef
 }) => {
+
+  const nsfwStyleOptions: Array<{ value: NsfwDescriptionStyle; label: string }> = NSFW_DESCRIPTION_STYLES.map(style => {
+    const labelKey = `nsfwStyle${style.replace(/\s+/g, '')}` as keyof typeof VIETNAMESE;
+    const labelValue = VIETNAMESE[labelKey];
+    return { value: style, label: (typeof labelValue === 'string' ? labelValue : style) };
+  });
+
+  const violenceLevelOptions: Array<{ value: ViolenceLevel; label: string }> = VIOLENCE_LEVELS.map(level => {
+    const labelKey = `violenceLevel${level.replace(/\s+/g, '')}` as keyof typeof VIETNAMESE;
+    const labelValue = VIETNAMESE[labelKey];
+    return { value: level, label: (typeof labelValue === 'string' ? labelValue : level) };
+  });
+
+  const storyToneOptions: Array<{ value: StoryTone; label: string }> = STORY_TONES.map(tone => {
+    const labelKey = `storyTone${tone.replace(/\s+/g, '')}` as keyof typeof VIETNAMESE;
+    const labelValue = VIETNAMESE[labelKey];
+    return { value: tone, label: (typeof labelValue === 'string' ? labelValue : tone) };
+  });
+
   return (
     <div className="space-y-6">
       <fieldset className="border border-indigo-700 p-4 rounded-md bg-indigo-900/10">
@@ -66,19 +81,62 @@ const AIAssistTab: React.FC<AIAssistTabProps> = ({
           placeholder={VIETNAMESE.storyIdeaDescriptionPlaceholder}
         />
         <InputField
-          label={VIETNAMESE.nsfwIdeaCheckboxLabel}
-          id="isOriginalStoryIdeaNsfw"
-          name="isOriginalStoryIdeaNsfw"
+          label={VIETNAMESE.nsfwIdeaCheckboxLabel} // This now controls settings.nsfwMode
+          id="nsfwModeStory" // Unique ID for this checkbox instance
+          name="nsfwMode"
           type="checkbox"
-          checked={isOriginalStoryIdeaNsfw}
-          onChange={(e) => setIsOriginalStoryIdeaNsfw((e.target as HTMLInputElement).checked)}
+          checked={settings.nsfwMode || false}
+          onChange={handleChange} // Updates settings.nsfwMode in parent
         />
+        {settings.nsfwMode && (
+          <div className="pl-4 mt-2 space-y-3 border-l-2 border-indigo-500/50">
+            <InputField
+              label={VIETNAMESE.nsfwDescriptionStyleLabel}
+              id="nsfwDescriptionStyleStory"
+              name="nsfwDescriptionStyle"
+              type="select"
+              options={nsfwStyleOptions.map(opt => opt.label)}
+              value={nsfwStyleOptions.find(opt => opt.value === (settings.nsfwDescriptionStyle || DEFAULT_NSFW_DESCRIPTION_STYLE))?.label || nsfwStyleOptions[0].label}
+              onChange={(e) => {
+                const selectedLabel = e.target.value;
+                const selectedValue = nsfwStyleOptions.find(opt => opt.label === selectedLabel)?.value || DEFAULT_NSFW_DESCRIPTION_STYLE;
+                handleChange({ target: { name: 'nsfwDescriptionStyle', value: selectedValue } } as any);
+              }}
+            />
+            <InputField
+              label={VIETNAMESE.violenceLevelLabel}
+              id="violenceLevelStory"
+              name="violenceLevel"
+              type="select"
+              options={violenceLevelOptions.map(opt => opt.label)}
+              value={violenceLevelOptions.find(opt => opt.value === (settings.violenceLevel || DEFAULT_VIOLENCE_LEVEL))?.label || violenceLevelOptions[1].label}
+              onChange={(e) => {
+                  const selectedLabel = e.target.value;
+                  const selectedValue = violenceLevelOptions.find(opt => opt.label === selectedLabel)?.value || DEFAULT_VIOLENCE_LEVEL;
+                  handleChange({ target: { name: 'violenceLevel', value: selectedValue } } as any);
+              }}
+            />
+            <InputField
+              label={VIETNAMESE.storyToneLabel}
+              id="storyToneStory"
+              name="storyTone"
+              type="select"
+              options={storyToneOptions.map(opt => opt.label)}
+              value={storyToneOptions.find(opt => opt.value === (settings.storyTone || DEFAULT_STORY_TONE))?.label || storyToneOptions[1].label}
+              onChange={(e) => {
+                  const selectedLabel = e.target.value;
+                  const selectedValue = storyToneOptions.find(opt => opt.label === selectedLabel)?.value || DEFAULT_STORY_TONE;
+                  handleChange({ target: { name: 'storyTone', value: selectedValue } } as any);
+              }}
+            />
+          </div>
+        )}
         <Button
           onClick={handleGenerateFromStoryIdea}
           isLoading={isGeneratingDetails}
           disabled={isGeneratingDetails || isGeneratingFanficDetails}
           variant="primary"
-          className="w-full sm:w-auto"
+          className="w-full sm:w-auto mt-3"
           loadingText={VIETNAMESE.generatingWorldDetails}
         >
           {VIETNAMESE.generateDetailsFromStoryButton}
@@ -132,19 +190,62 @@ const AIAssistTab: React.FC<AIAssistTabProps> = ({
           placeholder={VIETNAMESE.fanficPlayerDescriptionPlaceholder}
         />
         <InputField
-          label={VIETNAMESE.nsfwIdeaCheckboxLabel}
-          id="isFanficIdeaNsfw"
-          name="isFanficIdeaNsfw"
+          label={VIETNAMESE.nsfwIdeaCheckboxLabel} // This now controls settings.nsfwMode
+          id="nsfwModeFanfic" // Unique ID for this checkbox instance
+          name="nsfwMode"
           type="checkbox"
-          checked={isFanficIdeaNsfw}
-          onChange={(e) => setIsFanficIdeaNsfw((e.target as HTMLInputElement).checked)}
+          checked={settings.nsfwMode || false}
+          onChange={handleChange} // Updates settings.nsfwMode in parent
         />
+         {settings.nsfwMode && (
+          <div className="pl-4 mt-2 space-y-3 border-l-2 border-teal-500/50">
+            <InputField
+              label={VIETNAMESE.nsfwDescriptionStyleLabel}
+              id="nsfwDescriptionStyleFanfic"
+              name="nsfwDescriptionStyle"
+              type="select"
+              options={nsfwStyleOptions.map(opt => opt.label)}
+              value={nsfwStyleOptions.find(opt => opt.value === (settings.nsfwDescriptionStyle || DEFAULT_NSFW_DESCRIPTION_STYLE))?.label || nsfwStyleOptions[0].label}
+              onChange={(e) => {
+                const selectedLabel = e.target.value;
+                const selectedValue = nsfwStyleOptions.find(opt => opt.label === selectedLabel)?.value || DEFAULT_NSFW_DESCRIPTION_STYLE;
+                handleChange({ target: { name: 'nsfwDescriptionStyle', value: selectedValue } } as any);
+              }}
+            />
+            <InputField
+              label={VIETNAMESE.violenceLevelLabel}
+              id="violenceLevelFanfic"
+              name="violenceLevel"
+              type="select"
+              options={violenceLevelOptions.map(opt => opt.label)}
+              value={violenceLevelOptions.find(opt => opt.value === (settings.violenceLevel || DEFAULT_VIOLENCE_LEVEL))?.label || violenceLevelOptions[1].label}
+              onChange={(e) => {
+                  const selectedLabel = e.target.value;
+                  const selectedValue = violenceLevelOptions.find(opt => opt.label === selectedLabel)?.value || DEFAULT_VIOLENCE_LEVEL;
+                  handleChange({ target: { name: 'violenceLevel', value: selectedValue } } as any);
+              }}
+            />
+            <InputField
+              label={VIETNAMESE.storyToneLabel}
+              id="storyToneFanfic"
+              name="storyTone"
+              type="select"
+              options={storyToneOptions.map(opt => opt.label)}
+              value={storyToneOptions.find(opt => opt.value === (settings.storyTone || DEFAULT_STORY_TONE))?.label || storyToneOptions[1].label}
+              onChange={(e) => {
+                  const selectedLabel = e.target.value;
+                  const selectedValue = storyToneOptions.find(opt => opt.label === selectedLabel)?.value || DEFAULT_STORY_TONE;
+                  handleChange({ target: { name: 'storyTone', value: selectedValue } } as any);
+              }}
+            />
+          </div>
+        )}
         <Button
           onClick={handleGenerateFromFanfic}
           isLoading={isGeneratingFanficDetails}
           disabled={isGeneratingDetails || isGeneratingFanficDetails || isLoadingTokens || (fanficSourceType === 'file' && (!fanficFile || (fanficTokenCount !== null && fanficTokenCount > MAX_TOKENS_FANFIC)))}
           variant="primary"
-          className="w-full sm:w-auto mt-2 bg-teal-600 hover:bg-teal-700 focus:ring-teal-500"
+          className="w-full sm:w-auto mt-3 bg-teal-600 hover:bg-teal-700 focus:ring-teal-500"
           loadingText={VIETNAMESE.generatingFanficDetails}
         >
           {VIETNAMESE.generateFanficButton}

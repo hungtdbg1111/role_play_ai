@@ -61,17 +61,15 @@ export const processStatusEffectApply = (
         description,
         type,
         durationTurns,
-        statModifiers: statModifiers as StatusEffect['statModifiers'], // Cast after parsing
+        statModifiers: statModifiers as StatusEffect['statModifiers'], 
         specialEffects,
         source: tagParams.source || 'Không rõ',
         icon: tagParams.icon || undefined,
     };
 
-    // Remove existing effect with the same name before adding new one (or refresh duration)
     newKb.playerStats.activeStatusEffects = newKb.playerStats.activeStatusEffects.filter(eff => eff.name !== newEffect.name);
     newKb.playerStats.activeStatusEffects.push(newEffect);
     
-    // Recalculate effective stats after applying the effect
     newKb.playerStats = calculateEffectiveStats(newKb.playerStats, newKb.equippedItems, newKb.inventory);
 
     systemMessages.push({
@@ -106,7 +104,6 @@ export const processStatusEffectRemove = (
     newKb.playerStats.activeStatusEffects = newKb.playerStats.activeStatusEffects.filter(eff => eff.name !== name);
 
     if (newKb.playerStats.activeStatusEffects.length < initialEffectCount) {
-        // Recalculate effective stats after removing the effect
         newKb.playerStats = calculateEffectiveStats(newKb.playerStats, newKb.equippedItems, newKb.inventory);
         systemMessages.push({
             id: `status-effect-removed-${name.replace(/\s+/g, '-')}-${Date.now()}`, type: 'system',

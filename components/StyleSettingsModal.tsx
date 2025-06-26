@@ -50,6 +50,7 @@ const StyleSettingsModal: React.FC<StyleSettingsModalProps> = ({ initialSettings
   const renderStyleSection = (sectionKey: keyof StyleSettings, sectionLabel: string) => {
     const sectionStyles = currentStyles[sectionKey];
     const isKeywordSection = sectionKey === 'keywordHighlight';
+    const isDialogueSection = sectionKey === 'dialogueHighlight';
 
     return (
       <fieldset className="border border-gray-700 p-4 rounded-md mb-6 bg-gray-800/30">
@@ -66,43 +67,45 @@ const StyleSettingsModal: React.FC<StyleSettingsModalProps> = ({ initialSettings
           </Button>
         </legend>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
-          {!isKeywordSection && ( // Font family only if not keyword section (or if explicitly enabled later)
-            <div>
-              <label htmlFor={`${sectionKey}-fontFamily`} className="block text-sm font-medium text-gray-300 mb-1">{VIETNAMESE.fontFamilyLabel}</label>
-              <select
-                id={`${sectionKey}-fontFamily`}
-                value={sectionStyles.fontFamily || 'inherit'}
-                onChange={(e) => handleStyleChange(sectionKey, 'fontFamily', e.target.value)}
-                className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-gray-100"
-              >
-                {AVAILABLE_FONTS.map(font => <option key={font} value={font}>{font === 'inherit' ? 'Kế thừa' : font}</option>)}
-              </select>
-            </div>
-          )}
-          {!isKeywordSection && ( // Font size only if not keyword section
-            <div>
-              <label htmlFor={`${sectionKey}-fontSize`} className="block text-sm font-medium text-gray-300 mb-1">{VIETNAMESE.fontSizeLabel}</label>
-              <select
-                id={`${sectionKey}-fontSize`}
-                value={sectionStyles.fontSize || 'inherit'}
-                onChange={(e) => handleStyleChange(sectionKey, 'fontSize', e.target.value)}
-                className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-gray-100"
-              >
-                {AVAILABLE_FONT_SIZES.map(size => <option key={size} value={size}>{size === 'inherit' ? 'Kế thừa' : size}</option>)}
-              </select>
-            </div>
+          {/* Font family and size only if not keyword or dialogue section */}
+          {(!isKeywordSection && !isDialogueSection) && ( 
+            <>
+              <div>
+                <label htmlFor={`${sectionKey}-fontFamily`} className="block text-sm font-medium text-gray-300 mb-1">{VIETNAMESE.fontFamilyLabel}</label>
+                <select
+                  id={`${sectionKey}-fontFamily`}
+                  value={sectionStyles.fontFamily || 'inherit'}
+                  onChange={(e) => handleStyleChange(sectionKey, 'fontFamily', e.target.value)}
+                  className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-gray-100"
+                >
+                  {AVAILABLE_FONTS.map(font => <option key={font} value={font}>{font === 'inherit' ? 'Kế thừa' : font}</option>)}
+                </select>
+              </div>
+              <div>
+                <label htmlFor={`${sectionKey}-fontSize`} className="block text-sm font-medium text-gray-300 mb-1">{VIETNAMESE.fontSizeLabel}</label>
+                <select
+                  id={`${sectionKey}-fontSize`}
+                  value={sectionStyles.fontSize || 'inherit'}
+                  onChange={(e) => handleStyleChange(sectionKey, 'fontSize', e.target.value)}
+                  className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-gray-100"
+                >
+                  {AVAILABLE_FONT_SIZES.map(size => <option key={size} value={size}>{size === 'inherit' ? 'Kế thừa' : size}</option>)}
+                </select>
+              </div>
+            </>
           )}
           <div>
             <label htmlFor={`${sectionKey}-textColor`} className="block text-sm font-medium text-gray-300 mb-1">{VIETNAMESE.textColorLabel}</label>
             <input
               type="color"
               id={`${sectionKey}-textColor`}
-              value={sectionStyles.textColor} // textColor is mandatory
+              value={sectionStyles.textColor} 
               onChange={(e) => handleStyleChange(sectionKey, 'textColor', e.target.value)}
               className="w-full h-10 p-1 bg-gray-700 border border-gray-600 rounded-md cursor-pointer"
             />
           </div>
-          {!isKeywordSection && ( // Background color only if not keyword section
+          {/* Background color only if not keyword or dialogue section */}
+          {(!isKeywordSection && !isDialogueSection) && ( 
             <div>
               <label htmlFor={`${sectionKey}-backgroundColor`} className="block text-sm font-medium text-gray-300 mb-1">{VIETNAMESE.backgroundColorLabel}</label>
               <input
@@ -126,6 +129,7 @@ const StyleSettingsModal: React.FC<StyleSettingsModalProps> = ({ initialSettings
         {renderStyleSection('playerAction', VIETNAMESE.playerActionStylesLabel)}
         {renderStyleSection('choiceButton', VIETNAMESE.choiceButtonStylesLabel)}
         {renderStyleSection('keywordHighlight', VIETNAMESE.keywordHighlightStylesLabel)}
+        {renderStyleSection('dialogueHighlight', VIETNAMESE.dialogueHighlightStylesLabel || "Kiểu Chữ Hội Thoại Đặc Biệt")}
       </div>
       <div className="mt-6 pt-4 border-t border-gray-700 flex flex-col sm:flex-row justify-between items-center space-y-3 sm:space-y-0">
         <Button 

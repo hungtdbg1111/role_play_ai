@@ -26,6 +26,14 @@
       ::-webkit-scrollbar-thumb:hover {
         background: #4338ca; /* indigo-700 */
       }
+
+      /* Custom font declaration */
+      @font-face {
+        font-family: 'Bookerly';
+        src: url('/fonts/bookerly.ttf') format('truetype');
+        font-weight: normal;
+        font-style: normal;
+      }
     </style>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -38,13 +46,12 @@
     "react-dom/": "https://esm.sh/react-dom@19.0.0/",
     "react/": "https://esm.sh/react@19.0.0/",
     "@google/genai": "https://esm.sh/@google/genai@^1.5.1",
-    "firebase/app": "https://www.gstatic.com/firebasejs/11.9.1/firebase-app.js",
-    "firebase/auth": "https://www.gstatic.com/firebasejs/11.9.1/firebase-auth.js",
-    "firebase/firestore": "https://www.gstatic.com/firebasejs/11.9.1/firebase-firestore.js",
-    "firebase/analytics": "https://www.gstatic.com/firebasejs/11.9.1/firebase-analytics.js",
-    "firebase/": "https://esm.sh/firebase@^11.9.1/",
     "@cloudinary/url-gen": "https://esm.sh/@cloudinary/url-gen@^1.19.0",
-    "@cloudinary/react": "https://esm.sh/@cloudinary/react@^1.13.0"
+    "@cloudinary/react": "https://esm.sh/@cloudinary/react@^1.13.0",
+    "crypto": "https://esm.sh/crypto@^1.0.1",
+    "fast-json-patch": "https://esm.sh/fast-json-patch@3.1.1",
+    "pako": "https://esm.sh/pako@2.1.0",
+    "@netlify/functions": "https://esm.sh/@netlify/functions@^4.1.7"
   }
 }
 </script>

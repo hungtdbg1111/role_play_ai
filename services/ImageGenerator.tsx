@@ -1,7 +1,7 @@
 
 import { GoogleGenAI } from "@google/genai";
 
-const IMAGE_MODEL_NAME = 'imagen-3.0-generate-002'; // Updated model
+const IMAGE_MODEL_NAME = 'imagen-3.0-generate-002'; // Updated model to guideline-specified one
 let ai: GoogleGenAI | null = null;
 
 function getAiInstance(): GoogleGenAI {

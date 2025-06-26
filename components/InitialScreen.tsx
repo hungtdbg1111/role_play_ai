@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { GameScreen, FirebaseUser } from '../types';
+import { GameScreen } from '../types'; 
 import Button from './ui/Button';
 import Modal from './ui/Modal'; 
 import Spinner from './ui/Spinner'; 
@@ -8,9 +8,8 @@ import { VIETNAMESE, GAME_TITLE, APP_VERSION } from '../constants';
 
 interface InitialScreenProps {
   setCurrentScreen: (screen: GameScreen) => void;
-  firebaseUser: FirebaseUser | null;
-  onSignOut: () => void;
-  isFirebaseLoading: boolean;
+  onSignOut: () => void; 
+  isFirebaseLoading: boolean; 
 }
 
 // Function to parse simple Markdown to HTML
@@ -30,7 +29,6 @@ function markdownToHtml(markdownText: string): string {
   text = text.replace(/^---$/gm, '<hr class="my-5 border-gray-700" />');
 
   // Pre-process bold within lines before list/paragraph logic to simplify
-  // This helps if bold is inside list items or paragraphs.
   text = text.replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-yellow-400">$1</strong>');
   
   // Lists (* item)
@@ -40,14 +38,12 @@ function markdownToHtml(markdownText: string): string {
 
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i];
-    // List items can have leading spaces, e.g. "*   item" or "  * item"
     const listItemMatch = line.match(/^(\s*)\* (.*)/);
     if (listItemMatch) {
       if (!inListScope) {
         newLines.push('<ul class="list-disc list-outside pl-6 my-3 space-y-1 text-gray-300">');
         inListScope = true;
       }
-      // listItemMatch[2] contains the content after "* "
       newLines.push(`<li>${listItemMatch[2]}</li>`);
     } else {
       if (inListScope) {
@@ -57,19 +53,18 @@ function markdownToHtml(markdownText: string): string {
       newLines.push(line);
     }
   }
-  if (inListScope) { // Close list if it's the last element
+  if (inListScope) { 
     newLines.push('</ul>');
   }
   text = newLines.join('\n');
 
-  // Paragraphs: Wrap lines that are not part of other structures in <p> tags.
+  // Paragraphs
   lines = text.split('\n');
   newLines = [];
   let paragraphBuffer: string[] = [];
 
   const flushParagraph = () => {
     if (paragraphBuffer.length > 0) {
-      // Join lines in buffer with <br> for intra-paragraph newlines
       newLines.push(`<p class="my-2 text-gray-200 leading-relaxed">${paragraphBuffer.join('<br />')}</p>`);
       paragraphBuffer = [];
     }
@@ -77,27 +72,24 @@ function markdownToHtml(markdownText: string): string {
 
   for (const line of lines) {
     const trimmedLine = line.trim();
-    // Check if the line is already processed into an HTML block tag or is part of a list structure
     if (trimmedLine.startsWith('<h3') || trimmedLine.startsWith('<hr') || 
         trimmedLine.startsWith('<ul') || trimmedLine.startsWith('</ul') || 
         trimmedLine.startsWith('<li')) {
-      flushParagraph(); // Finalize any pending paragraph before adding this HTML block
+      flushParagraph(); 
       newLines.push(line);
     } else if (trimmedLine === '') {
-      flushParagraph(); // Empty line signifies paragraph break
-      // Optionally, add a <br> or just let CSS margins handle spacing for empty lines if desired
+      flushParagraph(); 
     } else {
-      paragraphBuffer.push(line); // Add line to current paragraph buffer
+      paragraphBuffer.push(line); 
     }
   }
-  flushParagraph(); // Finalize any remaining paragraph at the end of the text
+  flushParagraph(); 
 
-  // Join all processed lines and clean up any excessive newlines from the process
   return newLines.join('\n').replace(/(\n\s*){2,}/g, '\n').trim();
 }
 
 
-const InitialScreen: React.FC<InitialScreenProps> = ({ setCurrentScreen, firebaseUser, onSignOut, isFirebaseLoading }) => {
+const InitialScreen: React.FC<InitialScreenProps> = ({ setCurrentScreen }) => {
   const [showUpdateNotesModal, setShowUpdateNotesModal] = useState(false);
   const [updateNotes, setUpdateNotes] = useState<string | null>(null);
   const [isLoadingNotes, setIsLoadingNotes] = useState(false);
@@ -108,7 +100,6 @@ const InitialScreen: React.FC<InitialScreenProps> = ({ setCurrentScreen, firebas
     setErrorNotes(null);
     const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/hungtdbg1111/role_play_ai/main/updatedcontent.txt';
     try {
-      // Add a cache-busting parameter to the URL
       const response = await fetch(`${GITHUB_RAW_URL}?t=${new Date().getTime()}`);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -118,7 +109,7 @@ const InitialScreen: React.FC<InitialScreenProps> = ({ setCurrentScreen, firebas
     } catch (error) {
       console.error("Failed to fetch update notes from GitHub:", error);
       setErrorNotes(VIETNAMESE.errorLoadingUpdateNotes || "Không thể tải thông tin cập nhật.");
-      setUpdateNotes(null); // Ensure notes are cleared on error
+      setUpdateNotes(null); 
     } finally {
       setIsLoadingNotes(false);
     }
@@ -156,10 +147,8 @@ const InitialScreen: React.FC<InitialScreenProps> = ({ setCurrentScreen, firebas
           size="lg" 
           className="w-full" 
           onClick={handleLoadGameClick}
-          disabled={isFirebaseLoading && !firebaseUser} 
-          title={!firebaseUser && !isFirebaseLoading ? VIETNAMESE.signInRequiredForLoad : undefined}
         >
-          {isFirebaseLoading && !firebaseUser ? VIETNAMESE.signingInAnonymously : VIETNAMESE.loadGame}
+          {VIETNAMESE.loadGame}
         </Button>
          <Button 
             variant="ghost" 
@@ -193,18 +182,7 @@ const InitialScreen: React.FC<InitialScreenProps> = ({ setCurrentScreen, firebas
           >
           {VIETNAMESE.storageSettings} 
         </Button>
-        {firebaseUser && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full mt-2 border-red-500 text-red-400 hover:bg-red-700 hover:text-white"
-            onClick={onSignOut}
-          >
-            {VIETNAMESE.signOutButton} ({firebaseUser.isAnonymous ? VIETNAMESE.signedInAsGuest : firebaseUser.displayName || firebaseUser.email || VIETNAMESE.signedInAsGuest})
-          </Button>
-        )}
       </div>
-      {isFirebaseLoading && !firebaseUser && <p className="mt-4 text-sm text-gray-400">{VIETNAMESE.signingInAnonymously}</p>}
       <p className="mt-12 text-sm text-gray-500">Phiên bản {APP_VERSION}</p>
 
       {showUpdateNotesModal && (

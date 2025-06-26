@@ -41,6 +41,7 @@ export const processPlayerStatsInit = (
                 if (!isNaN(numValue)) {
                     (statsUpdates as any)[key] = numValue;
                 } else {
+                    console.warn(`PLAYER_STATS_INIT: Invalid number value "${valueStr}" for key "${key}". Using default.`);
                     const defaultVal = DEFAULT_PLAYER_STATS[key];
                     (statsUpdates as any)[key] = typeof defaultVal === 'number' ? defaultVal : 0;
                 }
@@ -152,6 +153,7 @@ export const processStatsUpdate = (
 
     newKb.playerStats = { ...newKb.playerStats, ...statsUpdates };
     if (newKb.playerStats.realm && typeof newKb.playerStats.realm !== 'string') {
+        console.warn(`STATS_UPDATE: Realm value is not a string: ${newKb.playerStats.realm}. Reverting to old realm "${oldRealm}".`);
         newKb.playerStats.realm = oldRealm; 
         realmChanged = false; 
     }

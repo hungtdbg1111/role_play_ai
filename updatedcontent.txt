@@ -1,3 +1,12 @@
+### Bản Cập Nhật Chính - Phiên bản 1.2.5 (Ngày 26/06/2025)
+**Thêm chức năng tự upload ảnh hoặc url cho npc và nhân vật chính.**
+**Cải thiện hệ thống độ khó.**
+**Cải thiện hệ thống rollback và save game.**
+**Tối ưu cơ chế mặc trang bị cho điện thoại.**
+**Thêm phần highlight lời nói nhân vật.**
+**Thêm Phong Cách Miêu Tả Tình Dục (Khi Chế Độ 18+ Bật), Mức Độ Miêu Tả Bạo Lực (Khi Chế Độ 18+ Bật), Tông Màu Câu Chuyện (Khi Chế Độ 18+ Bật) vào phần lên ý tưởng thế giới và trong phần dẫn chuyện trong game để câu chuyện đi theo hướng người chơi muốn hơn.**
+
+---
 ### Bản Cập Nhật Chính - Phiên bản 1.2.3 (Ngày 25/06/2025)
 **Lười ghi quá**
 

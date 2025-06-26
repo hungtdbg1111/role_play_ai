@@ -7,49 +7,53 @@ import Spinner from '../../ui/Spinner';
 import { VIETNAMESE, FEMALE_AVATAR_BASE_URL, MAX_FEMALE_AVATAR_INDEX, MALE_AVATAR_PLACEHOLDER_URL, CLOUDINARY_CLOUD_NAME } from '../../../constants';
 import { generateImageUnified } from '../../../services/geminiService'; 
 import { uploadImageToCloudinary } from '../../../services/cloudinaryService';
+import { isValidImageUrl } from '../../../utils/imageValidationUtils';
 
 interface CharacterStoryTabProps {
   settings: WorldSettings;
   handleChange: (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => void;
-  playerAvatarPreviewUrl: string | null;
-  setPlayerAvatarPreviewUrl: (url: string | null) => void;
+  playerAvatarPreviewUrl: string | null; 
+  setPlayerAvatarPreviewUrl: (url: string | null) => void; 
   onPlayerAvatarDataChange: (data: string | null) => void; 
 }
 
 const CharacterStoryTab: React.FC<CharacterStoryTabProps> = ({
   settings,
   handleChange,
-  playerAvatarPreviewUrl,
-  setPlayerAvatarPreviewUrl,
-  onPlayerAvatarDataChange,
+  playerAvatarPreviewUrl, 
+  setPlayerAvatarPreviewUrl, 
+  onPlayerAvatarDataChange, 
 }) => {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [aiAvatarPrompt, setAiAvatarPrompt] = useState('');
   const [isGeneratingAiAvatar, setIsGeneratingAiAvatar] = useState(false);
   const [aiAvatarError, setAiAvatarError] = useState<string | null>(null);
 
+  // State for player avatar URL input during setup
+  const [showPlayerSetupAvatarUrlInput, setShowPlayerSetupAvatarUrlInput] = useState(false);
+  const [playerAvatarUrlInput, setPlayerAvatarUrlInput] = useState(''); 
+  const [isPlayerAvatarUrlValidating, setIsPlayerAvatarUrlValidating] = useState(false);
+  const [playerAvatarUrlError, setPlayerAvatarUrlError] = useState<string | null>(null);
+
   useEffect(() => {
-    // If settings.playerAvatarUrl exists (e.g., from imported settings or previous AI gen)
-    // and it's not a base64 string or 'uploaded_via_file', set it as preview.
-    // This ensures that if a Cloudinary URL was saved, it's used.
-    if (settings.playerAvatarUrl && 
-        !settings.playerAvatarUrl.startsWith('data:') && 
-        settings.playerAvatarUrl !== 'uploaded_via_file' &&
-        playerAvatarPreviewUrl !== settings.playerAvatarUrl) { // Avoid loop if already set
-      setPlayerAvatarPreviewUrl(settings.playerAvatarUrl);
-      onPlayerAvatarDataChange(settings.playerAvatarUrl); // Notify parent it's a URL
+    if (playerAvatarPreviewUrl && playerAvatarPreviewUrl.startsWith('http')) {
+      setPlayerAvatarUrlInput(playerAvatarPreviewUrl);
+    } else {
+      setPlayerAvatarUrlInput('');
     }
-  }, [settings.playerAvatarUrl, setPlayerAvatarPreviewUrl, onPlayerAvatarDataChange, playerAvatarPreviewUrl]);
+  }, [playerAvatarPreviewUrl]);
 
 
   const handleRandomAvatar = () => {
     const randomIndex = Math.floor(Math.random() * MAX_FEMALE_AVATAR_INDEX) + 1;
     const randomUrl = `${FEMALE_AVATAR_BASE_URL}${randomIndex}.png`;
-    setPlayerAvatarPreviewUrl(randomUrl);
-    onPlayerAvatarDataChange(randomUrl); // Pass URL to parent
-    handleChange({ target: { name: 'playerAvatarUrl', value: randomUrl } } as any); // Update settings directly with URL
+    setPlayerAvatarPreviewUrl(randomUrl); 
+    onPlayerAvatarDataChange(randomUrl);  
+    handleChange({ target: { name: 'playerAvatarUrl', value: randomUrl } } as any); 
     setAiAvatarPrompt(''); 
     setAiAvatarError(null);
+    setPlayerAvatarUrlError(null);
+    setShowPlayerSetupAvatarUrlInput(false);
   };
 
   const handleAvatarUpload = (event: ChangeEvent<HTMLInputElement>) => {
@@ -58,12 +62,13 @@ const CharacterStoryTab: React.FC<CharacterStoryTabProps> = ({
       const reader = new FileReader();
       reader.onloadend = () => {
         const base64String = reader.result as string;
-        setPlayerAvatarPreviewUrl(base64String); // Show base64 preview immediately
-        onPlayerAvatarDataChange(base64String); // Pass base64 to parent for later Cloudinary upload
-        // Settings.playerAvatarUrl will be updated by App.tsx after successful Cloudinary upload
-        handleChange({ target: { name: 'playerAvatarUrl', value: 'uploaded_via_file' } } as any); // Mark as pending upload
+        setPlayerAvatarPreviewUrl(base64String); 
+        onPlayerAvatarDataChange(base64String); 
+        handleChange({ target: { name: 'playerAvatarUrl', value: 'uploaded_via_file' } } as any); 
         setAiAvatarPrompt('');
         setAiAvatarError(null);
+        setPlayerAvatarUrlError(null);
+        setShowPlayerSetupAvatarUrlInput(false);
       };
       reader.readAsDataURL(file);
     }
@@ -76,6 +81,9 @@ const CharacterStoryTab: React.FC<CharacterStoryTabProps> = ({
     if(fileInputRef.current) fileInputRef.current.value = "";
     setAiAvatarPrompt('');
     setAiAvatarError(null);
+    setPlayerAvatarUrlInput(''); 
+    setPlayerAvatarUrlError(null);
+    setShowPlayerSetupAvatarUrlInput(false);
   };
 
   const handleGenerateAiAvatar = async () => {
@@ -85,23 +93,23 @@ const CharacterStoryTab: React.FC<CharacterStoryTabProps> = ({
     }
     setIsGeneratingAiAvatar(true);
     setAiAvatarError(null);
+    setPlayerAvatarUrlInput(''); 
+    setPlayerAvatarUrlError(null);
+    setShowPlayerSetupAvatarUrlInput(false); 
     try {
-      const rawBase64ImageData = await generateImageUnified(aiAvatarPrompt); // Use unified service
+      const rawBase64ImageData = await generateImageUnified(aiAvatarPrompt); 
       const fullBase64DataUri = `data:image/png;base64,${rawBase64ImageData}`;
-      setPlayerAvatarPreviewUrl(fullBase64DataUri); // Show base64 preview first
       
-      // Attempt to upload to Cloudinary immediately
       try {
         const playerNameSlug = settings.playerName?.replace(/\s+/g, '_').toLowerCase() || `player_${Date.now()}`;
-        // Pass raw base64 to Cloudinary service
         const cloudinaryUrl = await uploadImageToCloudinary(rawBase64ImageData, 'player', `player_${playerNameSlug}`);
-        setPlayerAvatarPreviewUrl(cloudinaryUrl); // Update preview to Cloudinary URL
-        onPlayerAvatarDataChange(cloudinaryUrl); // Pass Cloudinary URL to parent
-        handleChange({ target: { name: 'playerAvatarUrl', value: cloudinaryUrl } } as any); // Update settings with Cloudinary URL
+        setPlayerAvatarPreviewUrl(cloudinaryUrl); 
+        onPlayerAvatarDataChange(cloudinaryUrl); 
+        handleChange({ target: { name: 'playerAvatarUrl', value: cloudinaryUrl } } as any); 
       } catch (uploadError) {
         console.error("Cloudinary upload failed for AI generated player avatar:", uploadError);
         setAiAvatarError("Tạo ảnh thành công, nhưng tải lên Cloudinary thất bại. Ảnh sẽ được lưu trữ tạm thời.");
-        // Fallback: pass base64 data URI if Cloudinary upload fails, for temporary display
+        setPlayerAvatarPreviewUrl(fullBase64DataUri); 
         onPlayerAvatarDataChange(fullBase64DataUri); 
         handleChange({ target: { name: 'playerAvatarUrl', value: 'upload_pending_after_ai_gen_cloudinary_fail' } } as any); 
       }
@@ -111,6 +119,25 @@ const CharacterStoryTab: React.FC<CharacterStoryTabProps> = ({
       setAiAvatarError(`${VIETNAMESE.errorGeneratingAiAvatar} ${errorMessage}`);
     } finally {
       setIsGeneratingAiAvatar(false);
+    }
+  };
+
+  const handlePlayerSetupAvatarUrlSubmit = async () => {
+    if (!playerAvatarUrlInput.trim()) return;
+    setIsPlayerAvatarUrlValidating(true);
+    setPlayerAvatarUrlError(null);
+    const isValid = await isValidImageUrl(playerAvatarUrlInput);
+    setIsPlayerAvatarUrlValidating(false);
+    if (isValid) {
+      setPlayerAvatarPreviewUrl(playerAvatarUrlInput); 
+      onPlayerAvatarDataChange(playerAvatarUrlInput);  
+      handleChange({ target: { name: 'playerAvatarUrl', value: playerAvatarUrlInput } } as any); 
+      setAiAvatarPrompt(''); 
+      setAiAvatarError(null);
+      if (fileInputRef.current) fileInputRef.current.value = ""; 
+      setShowPlayerSetupAvatarUrlInput(false); 
+    } else {
+      setPlayerAvatarUrlError(VIETNAMESE.avatarUrlInvalid);
     }
   };
 
@@ -179,7 +206,55 @@ const CharacterStoryTab: React.FC<CharacterStoryTabProps> = ({
               <img src={playerAvatarPreviewUrl} alt="Player Avatar Preview" className="w-24 h-24 sm:w-32 sm:h-32 rounded-lg object-cover mx-auto border-2 border-indigo-500 shadow-lg" />
             </div>
           )}
-          <div className="space-y-2">
+           
+           <Button
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              setShowPlayerSetupAvatarUrlInput(!showPlayerSetupAvatarUrlInput);
+              if (!showPlayerSetupAvatarUrlInput && playerAvatarPreviewUrl?.startsWith('http')) {
+                setPlayerAvatarUrlInput(playerAvatarPreviewUrl);
+              } else if (!showPlayerSetupAvatarUrlInput) {
+                setPlayerAvatarUrlInput('');
+              }
+              setPlayerAvatarUrlError(null);
+            }}
+            className="w-full text-sm border-cyan-600 hover:bg-cyan-700/50"
+            aria-expanded={showPlayerSetupAvatarUrlInput}
+            disabled={isGeneratingAiAvatar}
+            >
+            {showPlayerSetupAvatarUrlInput ? "Đóng Nhập URL" : VIETNAMESE.avatarUrlInputLabel.replace(":", "")}
+          </Button>
+
+          {showPlayerSetupAvatarUrlInput && (
+            <div className="mt-1.5 p-2 border border-gray-600 rounded-md bg-gray-800/30">
+                <InputField
+                label=""
+                id="playerAvatarUrlInputSetup"
+                value={playerAvatarUrlInput} 
+                onChange={(e) => setPlayerAvatarUrlInput(e.target.value)}
+                placeholder={VIETNAMESE.avatarUrlInputPlaceholder}
+                disabled={isGeneratingAiAvatar || isPlayerAvatarUrlValidating}
+                className="!mb-1.5"
+                />
+                <Button
+                    type="button"
+                    variant="primary"
+                    onClick={handlePlayerSetupAvatarUrlSubmit}
+                    className="w-full text-xs !py-1"
+                    isLoading={isPlayerAvatarUrlValidating}
+                    disabled={isGeneratingAiAvatar || isPlayerAvatarUrlValidating || !playerAvatarUrlInput.trim()}
+                    loadingText={VIETNAMESE.avatarUrlValidating}
+                >
+                    {VIETNAMESE.confirmUrlButton}
+                </Button>
+                {isPlayerAvatarUrlValidating && <Spinner size="sm" text={VIETNAMESE.avatarUrlValidating} className="mt-1 text-xs" />}
+                {playerAvatarUrlError && <p className="text-xs text-red-400 mt-1">{playerAvatarUrlError}</p>}
+            </div>
+          )}
+
+
+          <div className="space-y-2 pt-2 border-t border-gray-700/50">
             <InputField
               label={VIETNAMESE.aiAvatarPromptLabel}
               id="aiAvatarPrompt"
@@ -206,7 +281,7 @@ const CharacterStoryTab: React.FC<CharacterStoryTabProps> = ({
             {aiAvatarError && <p className="text-xs text-red-400 mt-1 text-center">{aiAvatarError}</p>}
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-2 pt-3 border-t border-gray-700 mt-3">
+          <div className="flex flex-col sm:flex-row gap-2 pt-3 border-t border-gray-700/50 mt-3">
             <Button type="button" variant="secondary" onClick={handleRandomAvatar} className="w-full sm:flex-1" disabled={isGeneratingAiAvatar}>
               {VIETNAMESE.randomAvatarButtonLabel}
             </Button>

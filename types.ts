@@ -1,9 +1,32 @@
-
-
-import type { User as FirebaseUserType } from 'firebase/auth';
 import { HarmCategory, HarmBlockThreshold } from "@google/genai";
 import * as GameTemplates from './templates'; // Import all templates
-import { AVAILABLE_GENRES as AVAILABLE_GENRES_VALUES, CUSTOM_GENRE_VALUE } from './constants'; // Import for GenreType
+// import { AVAILABLE_GENRES as AVAILABLE_GENRES_VALUES, CUSTOM_GENRE_VALUE } from './constants'; // Removed to break circular dependency
+
+// Re-export necessary types from GameTemplates
+export type EquipmentTypeValues = GameTemplates.EquipmentTypeValues;
+
+// Define genre values here to break circular dependency with constants.ts
+// This array must be kept in sync with CUSTOM_GENRE_VALUE in constants.ts regarding "Khác (Tự định nghĩa)"
+export const GENRE_VALUES_FOR_TYPE = [
+  "Tu Tiên (Mặc định)",
+  "Võ Hiệp",
+  "Tiên Hiệp",
+  "Huyền Huyễn",
+  "Cung Đấu",
+  "Linh Dị",
+  "Khoa Huyễn",
+  "Tây Phương Fantasy",
+  "Ngôn Tình",
+  "Đô Thị",
+  "Mạt Thế",
+  "Võng Du",
+  "Thể Thao",
+  "Kinh Dị",
+  "Khác (Tự định nghĩa)" // This literal must match CUSTOM_GENRE_VALUE in constants.ts
+] as const;
+
+export type GenreType = typeof GENRE_VALUES_FOR_TYPE[number];
+export type CustomGenreType = "Khác (Tự định nghĩa)"; // More direct definition
 
 export enum GameScreen {
   Initial = 'Initial',
@@ -17,23 +40,11 @@ export enum GameScreen {
   Crafting = 'Crafting',
 }
 
-export type FirebaseUser = FirebaseUserType;
-
-export type StorageType = 'local' | 'cloud';
-
-export interface FirebaseUserConfig {
-  apiKey: string;
-  authDomain: string;
-  projectId: string;
-  storageBucket: string;
-  messagingSenderId: string;
-  appId: string;
-  measurementId?: string;
-}
+export type StorageType = 'local'; // Only local storage
 
 export interface StorageSettings {
   storageType: StorageType;
-  firebaseUserConfig: FirebaseUserConfig | null;
+  // firebaseUserConfig is removed
 }
 
 export type StatusEffectType = 'buff' | 'debuff' | 'neutral';
@@ -190,15 +201,17 @@ export interface StartingFaction {
   initialPlayerReputation: number;
 }
 
-export type GenreType = typeof AVAILABLE_GENRES_VALUES[number];
-export type CustomGenreType = typeof CUSTOM_GENRE_VALUE;
+export type NsfwDescriptionStyle = 'Hoa Mỹ' | 'Trần Tục' | 'Gợi Cảm' | 'Mạnh Bạo (BDSM)';
+export type ViolenceLevel = 'Nhẹ Nhàng' | 'Thực Tế' | 'Cực Đoan';
+export type StoryTone = 'Tích Cực' | 'Trung Tính' | 'Đen Tối';
+
 
 export interface WorldSettings {
   saveGameName: string; 
   theme: string;
   settingDescription: string;
   writingStyle: string;
-  difficulty: 'Dễ' | 'Thường' | 'Khó';
+  difficulty: 'Dễ' | 'Thường' | 'Khó' | 'Ác Mộng';
   currencyName: string;
   playerName: string;
   playerGender: 'Nam' | 'Nữ' | 'Khác';
@@ -213,6 +226,9 @@ export interface WorldSettings {
   startingLocations: StartingLocation[];
   startingFactions: StartingFaction[]; 
   nsfwMode?: boolean;
+  nsfwDescriptionStyle?: NsfwDescriptionStyle;
+  violenceLevel?: ViolenceLevel; 
+  storyTone?: StoryTone; 
   originalStorySummary?: string;
   
   // Genre and Cultivation System
@@ -226,9 +242,20 @@ export interface WorldSettings {
   playerAvatarUrl?: string; // URL (Cloudinary, placeholder, or 'uploaded_via_file' if data is in KB)
 }
 
+// Type for JSON Patch operations (simplified version)
+export interface Operation {
+  op: "add" | "remove" | "replace" | "move" | "copy" | "test";
+  path: string;
+  value?: any;
+  from?: string;
+}
 export interface TurnHistoryEntry {
-  knowledgeBaseSnapshot: KnowledgeBase; 
-  gameMessagesSnapshot: GameMessage[];  
+  turnNumber: number; // The turn number this entry represents the START of
+  type: 'keyframe' | 'delta'; // Type of history entry
+  knowledgeBaseSnapshot: KnowledgeBase; // Full snapshot of KB AT START OF THIS TURN (always present for rollback)
+  knowledgeBaseDelta?: Operation[];      // If type is 'delta', this is diff(KB_start_of_PREVIOUS_turn, KB_start_of_THIS_turn)
+  gameMessagesSnapshot: GameMessage[];  // Full snapshot of Messages AT START OF THIS TURN (always present for rollback)
+  gameMessagesDelta?: Operation[];       // If type is 'delta', this is diff(Msgs_start_of_PREVIOUS_turn, Msgs_start_of_THIS_turn)
 }
 
 export interface RealmBaseStatDefinition {
@@ -324,6 +351,7 @@ export interface ApiConfig {
   imageModel: string; // For image generation
   safetySettings?: SafetySetting[];
   autoGenerateNpcAvatars: boolean; 
+  // useNetlifyForCloudinary is removed
 }
 
 export interface SaveGameData {
@@ -358,6 +386,7 @@ export interface StyleSettings {
   playerAction: StyleSettingProperty;
   choiceButton: StyleSettingProperty;
   keywordHighlight: StyleSettingProperty; 
+  dialogueHighlight: StyleSettingProperty; // New property for dialogue
 }
 
 export interface GeneratedWorldElements {
@@ -384,5 +413,15 @@ export interface GeneratedWorldElements {
   saveGameName?: string; 
   genre?: GenreType; 
   customGenreName?: string; // For "Khác (Tự định nghĩa)"
-  isCultivationEnabled?: boolean; 
+  isCultivationEnabled?: boolean;
+  nsfwDescriptionStyle?: NsfwDescriptionStyle;
+  violenceLevel?: ViolenceLevel; 
+  storyTone?: StoryTone; 
 }
+
+// New prop type for GameplayScreen
+export interface AvatarUploadHandlers {
+  onPlayerAvatarUploadRequest: (base64Data: string) => Promise<void>;
+  onNpcAvatarUploadRequest: (npcId: string, base64Data: string, gender: NPC['gender']) => Promise<void>;
+}
+export const DIALOGUE_MARKER = '"'; // Define the marker

@@ -1,10 +1,9 @@
-
-import { WorldSettings, StartingItem, GenreType } from '../types';
-import { SUB_REALM_NAMES, VIETNAMESE, AVAILABLE_GENRES, CUSTOM_GENRE_VALUE } from '../constants';
+import { WorldSettings, StartingItem, GenreType, ViolenceLevel, StoryTone, DIALOGUE_MARKER } from '../types';
+import { SUB_REALM_NAMES, VIETNAMESE, AVAILABLE_GENRES, CUSTOM_GENRE_VALUE, DEFAULT_NSFW_DESCRIPTION_STYLE, NSFW_DESCRIPTION_STYLES, DEFAULT_VIOLENCE_LEVEL, DEFAULT_STORY_TONE } from '../constants';
 import * as GameTemplates from '../templates';
 
 export const generateInitialPrompt = (worldConfig: WorldSettings): string => {
-  const { genre, customGenreName, isCultivationEnabled, heThongCanhGioi, canhGioiKhoiDau } = worldConfig;
+  const { genre, customGenreName, isCultivationEnabled, heThongCanhGioi, canhGioiKhoiDau, nsfwMode, nsfwDescriptionStyle, violenceLevel, storyTone } = worldConfig;
 
   const getMainRealms = (realmSystem: string): string[] => {
     return realmSystem.split(' - ').map(s => s.trim()).filter(s => s.length > 0);
@@ -14,6 +13,9 @@ export const generateInitialPrompt = (worldConfig: WorldSettings): string => {
   let realmSystemDescription = VIETNAMESE.noCultivationSystem;
   let subRealmNamesInstruction = "";
   const effectiveGenre = (genre === CUSTOM_GENRE_VALUE && customGenreName) ? customGenreName : genre;
+  const currentNsfwStyle = nsfwDescriptionStyle || DEFAULT_NSFW_DESCRIPTION_STYLE;
+  const currentViolenceLevel = violenceLevel || DEFAULT_VIOLENCE_LEVEL;
+  const currentStoryTone = storyTone || DEFAULT_STORY_TONE;
 
   if (isCultivationEnabled) {
     const mainRealms = getMainRealms(heThongCanhGioi);
@@ -22,6 +24,64 @@ export const generateInitialPrompt = (worldConfig: WorldSettings): string => {
     effectiveStartingRealm = canhGioiKhoiDau || defaultStartingRealmCultivation;
     realmSystemDescription = `"${heThongCanhGioi}" (Ví dụ: "Phàm Nhân - Luyện Khí - Trúc Cơ - Kim Đan - Nguyên Anh - Hóa Thần - Luyện Hư - Hợp Thể - Đại Thừa - Độ Kiếp")`;
     subRealmNamesInstruction = `Mỗi cảnh giới lớn (nếu có trong thể loại này) sẽ có 10 cấp độ phụ: ${SUB_REALM_NAMES.join(', ')}.`;
+  }
+
+  let difficultyGuidanceText = ""; 
+  switch (worldConfig.difficulty) {
+    case 'Dễ':
+      difficultyGuidanceText = VIETNAMESE.difficultyGuidanceEasy;
+      break;
+    case 'Thường':
+      difficultyGuidanceText = VIETNAMESE.difficultyGuidanceNormal;
+      break;
+    case 'Khó':
+      difficultyGuidanceText = VIETNAMESE.difficultyGuidanceHard;
+      break;
+    case 'Ác Mộng':
+      difficultyGuidanceText = VIETNAMESE.difficultyGuidanceNightmare;
+      break;
+    default:
+      difficultyGuidanceText = VIETNAMESE.difficultyGuidanceNormal;
+  }
+
+  let nsfwGuidanceCombined = "";
+  if (nsfwMode) {
+    let nsfwStyleGuidance = "";
+    switch (currentNsfwStyle) {
+      case 'Hoa Mỹ': nsfwStyleGuidance = VIETNAMESE.nsfwGuidanceHoaMy; break;
+      case 'Trần Tục': nsfwStyleGuidance = VIETNAMESE.nsfwGuidanceTranTuc; break;
+      case 'Gợi Cảm': nsfwStyleGuidance = VIETNAMESE.nsfwGuidanceGoiCam; break;
+      case 'Mạnh Bạo (BDSM)': nsfwStyleGuidance = VIETNAMESE.nsfwGuidanceManhBaoBDSM; break;
+      default: nsfwStyleGuidance = VIETNAMESE.nsfwGuidanceHoaMy;
+    }
+
+    let violenceGuidance = "";
+    switch (currentViolenceLevel) {
+        case 'Nhẹ Nhàng': violenceGuidance = VIETNAMESE.violenceLevelGuidanceNheNhang; break;
+        case 'Thực Tế': violenceGuidance = VIETNAMESE.violenceLevelGuidanceThucTe; break;
+        case 'Cực Đoan': violenceGuidance = VIETNAMESE.violenceLevelGuidanceCucDoan; break;
+        default: violenceGuidance = VIETNAMESE.violenceLevelGuidanceThucTe;
+    }
+
+    let toneGuidance = "";
+    switch (currentStoryTone) {
+        case 'Tích Cực': toneGuidance = VIETNAMESE.storyToneGuidanceTichCuc; break;
+        case 'Trung Tính': toneGuidance = VIETNAMESE.storyToneGuidanceTrungTinh; break;
+        case 'Đen Tối': toneGuidance = VIETNAMESE.storyToneGuidanceDenToi; break;
+        default: toneGuidance = VIETNAMESE.storyToneGuidanceTrungTinh;
+    }
+    nsfwGuidanceCombined = `
+**Hướng Dẫn Nội Dung Người Lớn (18+ ĐANG BẬT):**
+- **Phong Cách Miêu Tả Tình Dục:** ${currentNsfwStyle}.
+  ${nsfwStyleGuidance}
+- **Mức Độ Miêu Tả Bạo Lực:** ${currentViolenceLevel}.
+  ${violenceGuidance}
+- **Tông Màu Câu Chuyện:** ${currentStoryTone}.
+  ${toneGuidance}
+**LƯU Ý CHUNG KHI 18+ BẬT:** Hãy kết hợp các yếu tố trên để tạo ra trải nghiệm phù hợp. Ví dụ, một câu chuyện "Đen Tối" với bạo lực "Cực Đoan" và miêu tả "Mạnh Bạo (BDSM)" sẽ rất khác với một câu chuyện "Tích Cực" với bạo lực "Nhẹ Nhàng" và miêu tả "Hoa Mỹ", dù cả hai đều có thể có yếu tố 18+.`;
+
+  } else {
+    nsfwGuidanceCombined = "LƯU Ý QUAN TRỌNG: Chế độ Người Lớn đã được TẮT. Vui lòng duy trì nội dung phù hợp với mọi lứa tuổi, tập trung vào phiêu lưu và phát triển nhân vật. Tránh các chủ đề nhạy cảm, bạo lực quá mức hoặc tình dục.";
   }
 
 
@@ -72,12 +132,15 @@ ${worldConfig.startingLocations && worldConfig.startingLocations.length > 0 ? wo
 - Phe phái khởi đầu cụ thể:
 ${worldConfig.startingFactions && worldConfig.startingFactions.length > 0 ? worldConfig.startingFactions.map(fac => `  - Tên: ${fac.name}, Mô tả: ${fac.description}, Chính/Tà: ${fac.alignment}, Uy tín ban đầu: ${fac.initialPlayerReputation}`).join('\n') : "  Không có phe phái khởi đầu cụ thể."}
 
-**CHẾ ĐỘ NỘI DUNG (TỔNG THỂ GAME):**
-- Chế độ Người Lớn (18+): ${worldConfig.nsfwMode ? "BẬT" : "TẮT"}
-${worldConfig.nsfwMode
-  ? "LƯU Ý QUAN TRỌNG: Chế độ Người Lớn đã được BẬT. YÊU CẦU bạn chủ động, ưu tiên và tích cực tạo ra các tình huống, mô tả, ngôn ngữ và chủ đề người lớn, nhạy cảm, bạo lực hoặc tình dục một cách chi tiết và rõ ràng. Hãy mạnh dạn đưa ra những đoạn văn 18+ thật chi tiết bao gồm cả các lựa chọn hành động 18+ cho gợi ý người chơi."
-  : "LƯU Ý QUAN TRỌNG: Chế độ Người Lớn đã được TẮT. Vui lòng duy trì nội dung phù hợp với mọi lứa tuổi, tập trung vào phiêu lưu và phát triển nhân vật. Tránh các chủ đề nhạy cảm, bạo lực quá mức hoặc tình dục."
-}
+**HƯỚNG DẪN VỀ ĐỘ KHÓ (Rất quan trọng để AI tuân theo):**
+- **Dễ:** ${VIETNAMESE.difficultyGuidanceEasy} Tỉ lệ thành công cho lựa chọn thường CAO (ví dụ: 70-95%). Rủi ro thấp, phần thưởng dễ đạt.
+- **Thường:** ${VIETNAMESE.difficultyGuidanceNormal} Tỉ lệ thành công cho lựa chọn TRUNG BÌNH (ví dụ: 50-80%). Rủi ro và phần thưởng cân bằng.
+- **Khó:** ${VIETNAMESE.difficultyGuidanceHard} Tỉ lệ thành công cho lựa chọn THẤP (ví dụ: 30-65%). Rủi ro cao, phần thưởng lớn nhưng khó kiếm.
+- **Ác Mộng:** ${VIETNAMESE.difficultyGuidanceNightmare} Tỉ lệ thành công cho lựa chọn CỰC KỲ THẤP (ví dụ: 15-50%). Rủi ro rất lớn, phần thưởng cực kỳ hiếm hoi.
+Hiện tại người chơi đã chọn độ khó: **${worldConfig.difficulty}**. Hãy điều chỉnh tỉ lệ thành công, lợi ích và rủi ro trong các lựa chọn [CHOICE: "..."] của bạn cho phù hợp với hướng dẫn độ khó này.
+
+**CHẾ ĐỘ NỘI DUNG VÀ PHONG CÁCH:**
+${nsfwGuidanceCombined}
 
 **QUY TẮC HỆ THỐNG (CHO VIỆC KHỞI TẠO BAN ĐẦU):**
 1.  **Khởi tạo Chỉ số Nhân Vật:** Dựa vào thông tin trên, hãy quyết định các chỉ số ban đầu cho nhân vật. Trả về dưới dạng tag \\\`[PLAYER_STATS_INIT: sinhLuc=X,${isCultivationEnabled ? 'linhLuc=Y,' : ''}kinhNghiem=0,realm="${effectiveStartingRealm}",currency=C,turn=1${isCultivationEnabled ? ',hieuUngBinhCanh=false' : ''}]\`\\\`.
@@ -108,7 +171,7 @@ ${isCultivationEnabled ? `2.  **Xác nhận Hệ thống Cảnh giới:** Hệ t
         Ví dụ (không tu luyện): \\\`[SKILL_LEARNED: name="Đàm Phán Khéo Léo", type="Kỹ năng xã hội", description="Thuyết phục người khác hiệu quả hơn.", effect="Tăng cơ hội thành công khi thương lượng.", baseDamage=0, healingAmount=0, cooldown=0]\\\`.
         ${worldConfig.startingSkills && worldConfig.startingSkills.map(skill => `[SKILL_LEARNED: name="${skill.name.replace(/"/g, '\\"')}",type="Khởi đầu",description="${skill.description.replace(/"/g, '\\"')}",effect="${skill.description.replace(/"/g, '\\"')}", ${isCultivationEnabled ? 'manaCost=0, ' : ''}baseDamage=0, healingAmount=0, cooldown=0]`).join('\n')}
     -   **NPC:** Sử dụng tag \\\`[NPC: name="Tên NPC", gender="Nam/Nữ/Khác/Không rõ", description="Mô tả chi tiết về NPC, bao gồm vai trò, tiểu sử ngắn.", personality="Tính cách1, Tính cách2", affinity=ĐộThiệnCảmBanĐầu, factionId="ID Phe (nếu có)", realm="Cảnh giới NPC (nếu có tu luyện, ví dụ: Luyện Khí Kỳ)", statsJSON='{"sinhLuc":100, "sucTanCong":15}' (TÙY CHỌN, để ghi đè chỉ số hiện tại), baseStatOverridesJSON='{"baseMaxSinhLuc":120}' (TÙY CHỌN, để ghi đè chỉ số cơ bản cho cảnh giới của NPC)]\\\`.
-        ${worldConfig.startingNPCs && worldConfig.startingNPCs.map(npc => `[NPC: name="${npc.name.replace(/"/g, '\\"')}", gender="${npc.gender || 'Không rõ'}", description="Chi tiết: ${npc.details.replace(/"/g, '\\"')}", personality="${npc.personality.replace(/"/g, '\\"')}", affinity=${npc.initialAffinity}${isCultivationEnabled ? `, realm="${npc.realm || effectiveStartingRealm}"` : ''}]`).join('\n')}
+        ${worldConfig.startingNPCs && worldConfig.startingNPCs.map(npc => `[NPC: name="${npc.name.replace(/"/g, '\\"')}", gender="${npc.gender || 'Không rõ'}", description="Chi tiết: ${npc.details.replace(/"/g, '\\"')}", personality="${npc.personality.replace(/"/g, '\\"')}", affinity=${npc.initialAffinity}${isCultivationEnabled && npc.realm ? `, realm="${npc.realm}"` : ''}]`).join('\n')}
     -   **Địa Điểm:** Sử dụng tag \\\`[LORE_LOCATION: name="Tên Địa Điểm", description="Mô tả chi tiết về địa điểm.", isSafeZone=true/false, regionId="ID Vùng (nếu có)"]\\\`.
         ${worldConfig.startingLocations && worldConfig.startingLocations.map(loc => `[LORE_LOCATION: name="${loc.name.replace(/"/g, '\\"')}", description="${loc.description.replace(/"/g, '\\"')}", isSafeZone=${loc.isSafeZone || false}${loc.regionId ? `, regionId="${loc.regionId.replace(/"/g, '\\"')}"` : ''}]`).join('\n')}
     -   **Phe phái:** Nếu có phe phái khởi đầu, sử dụng tag \\\`[FACTION_DISCOVERED: name="Tên Phe Phái", description="Mô tả", alignment="Chính Nghĩa/Trung Lập/Tà Ác/Hỗn Loạn", playerReputation=Số]\\\`.
@@ -119,6 +182,10 @@ ${isCultivationEnabled ? `2.  **Xác nhận Hệ thống Cảnh giới:** Hệ t
     **QUAN TRỌNG:** Bất cứ khi nào nhân vật học được một kỹ năng mới, BẮT BUỘC phải sử dụng tag \\\`[SKILL_LEARNED]\\\` với đầy đủ thông tin nhất có thể.
 
 **QUY TẮC SỬ DỤNG TAGS (CHUNG CHO MỌI LƯỢT KỂ TIẾP THEO, BAO GỒM CẢ LƯỢT ĐẦU TIÊN NÀY SAU KHI KHỞI TẠO):**
+0.  **Đánh Dấu Hội Thoại/Âm Thanh (QUAN TRỌNG):** Khi nhân vật nói chuyện, rên rỉ khi làm tình, hoặc kêu la khi chiến đấu, hãy đặt toàn bộ câu nói/âm thanh đó vào giữa hai dấu ngoặc kép và dấu '${DIALOGUE_MARKER}', hãy cho nhân vật và npc nói chuyện ở múc độ vừa phải ở những cuộc hội thoại bình thường và chiến đấu nhưng khi quan hệ tình dục thì hãy chèn thêm nhiều câu rên rỉ và những lời tục tĩu tăng tình thú giữa các hành động.
+    *   Ví dụ lời nói: AI kể: Hắn nhìn cô và nói ${DIALOGUE_MARKER}Em có khỏe không?${DIALOGUE_MARKER}.
+    *   Ví dụ tiếng rên: AI kể: Cô ấy khẽ rên ${DIALOGUE_MARKER}Ah...~${DIALOGUE_MARKER} khi bị chạm vào.
+    *   Ví dụ tiếng hét chiến đấu: AI kể: Tiếng hét ${DIALOGUE_MARKER}Xung phong!${DIALOGUE_MARKER} vang vọng chiến trường.
 1.  **Tag \\\`[STATS_UPDATE: TênChỉSố=GiáTrịHoặcThayĐổi, ...]\`\\\`:** Dùng để cập nhật chỉ số của người chơi.
     *   **Tham số TênChỉSố:** \`sinhLuc\`, \`linhLuc\` (nếu có tu luyện), \`kinhNghiem\` (nếu có tu luyện/cấp độ), \`currency\`, \`isInCombat\`, \`turn\`. Tên chỉ số NÊN viết thường.
     *   **GiáTrịHoặcThayĐổi:**
@@ -170,14 +237,27 @@ ${isCultivationEnabled ? `2.  **Xác nhận Hệ thống Cảnh giới:** Hệ t
     *   **VÍ DỤ (Allowed - Có tu luyện):** \\\`[SKILL_LEARNED: name="Phi Kiếm Thuật", type="${GameTemplates.SkillType.CHUDONG_TANCONG}", description="Điều khiển phi kiếm tấn công từ xa.", effect="Gây 30 sát thương và có 20% tỷ lệ làm chậm kẻ địch.", manaCost=15, baseDamage=30, cooldown=2]\\\`
 
 6.  **Tag \\\`[SKILL_UPDATE: name="Tên Skill Cần Sửa", newName="Tên Mới (Tùy chọn)", description="Mô tả mới", effect="Hiệu ứng mới", manaCost=Số, ...]\`\\\`:** Cập nhật kỹ năng hiện có.
+    *   **Tham số bắt buộc:** \`name\` (tên kỹ năng hiện tại để tìm).
+    *   **Tham số tùy chọn:** \`newName\` (nếu muốn đổi tên), \`description\`, \`type\`, \`effect\`, \`manaCost\`, \`baseDamage\`, \`healingAmount\`, \`cooldown\`, \`damageMultiplier\`. Chỉ các tham số được cung cấp sẽ được cập nhật.
     *   **VÍ DỤ:** \\\`[SKILL_UPDATE: name="Hỏa Cầu Thuật", newName="Đại Hỏa Cầu Thuật", effect="Gây 50 sát thương Hỏa trên diện rộng.", manaCost=25]\`\\\`
+    *   **VÍ DỤ (Not Allowed):** \\\`[SKILL_UPDATE: description="Mô tả mới cho skill không rõ tên."]\`\\\` (Lý do: Thiếu \`name\` để xác định skill cần cập nhật)
 
 7.  **Tags Nhiệm Vụ (\`QUEST_*\`):**
     *   \`[QUEST_ASSIGNED: title="Tên NV",description="Mô tả chi tiết NV",objectives="Mục tiêu 1|Mục tiêu 2|..."]\`\\\` (Dấu '|' phân cách các mục tiêu) (Bắt buộc phải có đầy đủ thuộc tính)
-    *   \`[QUEST_UPDATED: title="Tên NV đang làm", objectiveText="Văn bản GỐC của mục tiêu cần cập nhật (khớp chính xác)", newObjectiveText="Văn bản MỚI của mục tiêu (tùy chọn)", completed=true/false]\`\\\`
+    *   \`[QUEST_UPDATED: title="Tên NV đang làm", objectiveText="Văn bản GỐC của mục tiêu cần cập nhật (PHẢI KHỚP CHÍNH XÁC TOÀN BỘ, BAO GỒM CẢ SỐ LƯỢNG HIỆN TẠI nếu có, ví dụ: 'Săn lợn rừng (0/3)')", newObjectiveText="Văn bản MỚI của mục tiêu (TÙY CHỌN - nếu có thay đổi về mô tả hoặc số lượng, ví dụ: 'Săn lợn rừng (1/3)')", completed=true/false]\`\\\`
+        *   **QUAN TRỌNG VỀ ĐỊNH DẠNG TRẢ VỀ TAG NÀY:** CHỈ trả về duy nhất tag \`[QUEST_UPDATED: ...]\`. KHÔNG thêm bất kỳ văn bản mô tả nào về nhiệm vụ (ví dụ: "Nhiệm vụ: [Tên nhiệm vụ]") ngay trước hoặc sau tag. KHÔNG trả về khối JSON mô tả đối tượng nhiệm vụ. Mọi thông tin cho người chơi biết về cập nhật nhiệm vụ PHẢI được đưa vào phần lời kể (narration) một cách tự nhiên.
+        *   **QUAN TRỌNG VỚI MỤC TIÊU CÓ SỐ LƯỢNG (VD: 0/3):**
+            *   \`objectiveText\`: PHẢI là văn bản hiện tại, ví dụ: "Thu thập Linh Tâm Thảo (0/3)".
+            *   \`newObjectiveText\`: Nên cập nhật số lượng, ví dụ: "Thu thập Linh Tâm Thảo (1/3)". Nếu không cung cấp, hệ thống game có thể không hiển thị đúng tiến độ dạng chữ.
+            *   \`completed\`: Đặt là \`true\` CHỈ KHI mục tiêu đã hoàn thành ĐẦY ĐỦ (ví dụ: "Thu thập Linh Tâm Thảo (3/3)"). Nếu chỉ tăng số lượng nhưng chưa đủ (ví dụ: (1/3), (2/3)), thì đặt \`completed=false\`.
+        *   **VÍ DỤ (Cập nhật tiến độ):** Giả sử mục tiêu hiện tại là "Săn 3 Lợn Rừng (0/3)". Người chơi săn được 1 con. AI nên trả về:
+            \\\`[QUEST_UPDATED: title="Săn Lợn Rừng", objectiveText="Săn 3 Lợn Rừng (0/3)", newObjectiveText="Săn 3 Lợn Rừng (1/3)", completed=false]\`\\\`
+        *   **VÍ DỤ (Hoàn thành mục tiêu có số lượng):** Giả sử mục tiêu hiện tại là "Săn 3 Lợn Rừng (2/3)". Người chơi săn được con cuối cùng. AI nên trả về:
+            \\\`[QUEST_UPDATED: title="Săn Lợn Rừng", objectiveText="Săn 3 Lợn Rừng (2/3)", newObjectiveText="Săn 3 Lợn Rừng (3/3)", completed=true]\`\\\`
+        *   **VÍ DỤ (Cập nhật mục tiêu không có số lượng):**
+            \\\`[QUEST_UPDATED: title="Tìm Kiếm Manh Mối", objectiveText="Hỏi thăm dân làng về tên trộm.", newObjectiveText="Đã hỏi thăm một vài người, có vẻ tên trộm chạy về hướng Tây.", completed=false]\`\\\`
     *   \`[QUEST_COMPLETED: title="Tên NV đã hoàn thành toàn bộ"]\`\\\`
     *   \`[QUEST_FAILED: title="Tên NV đã thất bại"]\`\\\`
-    *   **VÍ DỤ (Allowed - Giao nhiệm vụ):** \\\`[QUEST_ASSIGNED: title="Tìm Kiếm Thảo Dược",description="Trưởng làng nhờ bạn tìm 3 cây Linh Tâm Thảo trong rừng.",objectives="Thu thập Linh Tâm Thảo (0/3)|Báo cáo cho Trưởng làng"]\\\`
 
 8.  **Tags Thêm Mới Thông Tin Thế Giới (\`NPC\`, \`LORE_LOCATION\`, \`FACTION_DISCOVERED\`, \`WORLD_LORE_ADD\`):**
     *   \`[NPC: name="Tên", gender="Nam/Nữ/Khác/Không rõ", description="Mô tả", personality="Tính cách", affinity=Số, factionId="ID Phe", realm="Cảnh giới NPC", statsJSON='{...}', baseStatOverridesJSON='{...}']\`\\\`
@@ -188,12 +268,17 @@ ${isCultivationEnabled ? `2.  **Xác nhận Hệ thống Cảnh giới:** Hệ t
 9.  **Tags Cập Nhật Thông Tin Thế Giới Hiện Có (\`NPC_UPDATE\`, \`LOCATION_UPDATE\`, \`FACTION_UPDATE\`, \`WORLD_LORE_UPDATE\`):** Tên/Tiêu đề phải khớp chính xác với thực thể cần cập nhật.
     *   \\\`[NPC_UPDATE: name="Tên NPC Hiện Tại", newName="Tên Mới (Tùy chọn)", affinity=+-GiáTrị, description="Mô tả mới", realm="Cảnh giới mới", statsJSON='{...}', ...]\`\\\`
     *   \\\`[LOCATION_UPDATE: name="Tên Địa Điểm Hiện Tại", newName="Tên Mới (Tùy chọn)", description="Mô tả mới", isSafeZone=true/false, ...]\`\\\`
+        *   **VÍ DỤ:** \\\`[LOCATION_UPDATE: name="Rừng Cổ Thụ", description="Khu rừng giờ đây âm u hơn và có thêm nhiều quái vật nguy hiểm."]\`\\\`
     *   \\\`[FACTION_UPDATE: name="Tên Phe Phái Hiện Tại", newName="Tên Mới (Tùy chọn)", description="Mô tả mới", alignment="Chính/Tà...", playerReputation="=X hoặc +=X hoặc -=X"]\`\\\`
+        *   **Tham số \`playerReputation\`:** Có thể là \`playerReputation="=50"\` (đặt thành 50), \`playerReputation="+=10"\` (tăng 10), \`playerReputation="-=5"\` (giảm 5).
         *   **VÍ DỤ:** \\\`[FACTION_UPDATE: name="Thanh Vân Môn", playerReputation="+=10", description="Môn phái ngày càng nổi tiếng nhờ sự đóng góp của bạn."]\`\\\`
     *   \\\`[WORLD_LORE_UPDATE: title="Tiêu Đề Lore Hiện Tại", newTitle="Tiêu Đề Mới (Tùy chọn)", content="Nội dung lore mới."]\`\\\`
+        *   **VÍ DỤ:** \\\`[WORLD_LORE_UPDATE: title="Nguồn Gốc Ma Tộc", content="Ma Tộc thực ra là một nhánh của Yêu Tộc cổ đại bị tha hóa."]\`\\\`
 
 10. **Tag Xóa Thông Tin Thế Giới (\`FACTION_REMOVE\`):**
     *   \\\`[FACTION_REMOVE: name="Tên Phe Phái Cần Xóa"]\`\\\`
+        *   **VÍ DỤ:** \\\`[FACTION_REMOVE: name="Hắc Phong Trại"]\`\\\`
+        *   **Lưu ý:** Hành động này không thể hoàn tác trong game.
 
 11. **Tag \\\`[MESSAGE: "Thông báo tùy chỉnh cho người chơi"]\`\\\`:** Dùng cho các thông báo hệ thống đặc biệt. **KHÔNG dùng để thông báo về việc lên cấp/đột phá cảnh giới.**
 12. **Tag \\\`[SET_COMBAT_STATUS: true/false]\`\\\`:** Bắt đầu hoặc kết thúc trạng thái chiến đấu.
@@ -207,13 +292,30 @@ ${isCultivationEnabled ? `2.  **Xác nhận Hệ thống Cảnh giới:** Hệ t
         *   \`specialEffects\`: Chuỗi các hiệu ứng đặc biệt, cách nhau bởi dấu chấm phẩy (';'). Ví dụ: "Không thể hành động;Tăng 10% tỉ lệ chí mạng".
         *   Ví dụ: \\\`[STATUS_EFFECT_APPLY: name="Trúng Độc", description="Mất máu từ từ.", type="debuff", durationTurns=5, statModifiers='{"sinhLuc": "-5"}', specialEffects="Mỗi lượt mất 5 Sinh Lực"]\\\`
     *   \`[STATUS_EFFECT_REMOVE: name="Tên Hiệu Ứng Cần Gỡ Bỏ"]\`\\\`
+    *   **LƯU Ý QUAN TRỌNG KHI SỬ DỤNG VẬT PHẨM (VÍ DỤ: ĐAN DƯỢC):**
+        Khi một vật phẩm (ví dụ: đan dược như "Bình Khí Huyết") được sử dụng và mang lại các hiệu ứng TẠM THỜI (tăng chỉ số, hiệu ứng đặc biệt), bạn PHẢI sử dụng tag \\\`[STATUS_EFFECT_APPLY: ...]\`\\\` để biểu thị các hiệu ứng này, thay vì dùng \\\`[STATS_UPDATE: ...]\`\\\` cho các chỉ số bị ảnh hưởng tạm thời.
+        *   **Thứ tự:** Luôn đặt tag \\\`[ITEM_CONSUMED: ...]\`\\\` TRƯỚC tag \\\`[STATUS_EFFECT_APPLY: ...]\`\\\`.
+        *   **Ví dụ:** Nếu vật phẩm "Bình Khí Huyết" (mô tả: "Một loại dược dịch có tác dụng bồi bổ khí huyết, tăng cường sinh lực. Uống vào sẽ cảm thấy cơ thể nóng rực, dục hỏa bừng bừng." và có tác dụng: "Tăng cường 20 sức tấn công, 30 sinh lực tối đa trong 30 phút. Tăng 10 điểm mị lực, 10 điểm dục vọng.") được sử dụng, bạn NÊN trả về:
+            \\\`[ITEM_CONSUMED: name="Bình Khí Huyết", quantity=1]\`\\\`
+            \\\`[STATUS_EFFECT_APPLY: name="Khí Huyết Sôi Trào", description="Cơ thể nóng rực, khí huyết cuộn trào, tăng cường sức mạnh và dục vọng.", type="buff", durationTurns=30, statModifiers='{"sucTanCong": 20, "maxSinhLuc": 30}', specialEffects="Tăng 10 điểm mị lực;Tăng 10 điểm dục vọng;Dục hỏa bùng cháy dữ dội"]\`\\\`
+        *   Các thay đổi vĩnh viễn hoặc hồi phục trực tiếp (ví dụ: hồi máu từ đan dược hồi phục không tăng maxSinhLuc) vẫn có thể dùng \\\`[STATS_UPDATE: sinhLuc=+X]\`\\\`.
+        *   Nếu vật phẩm có cả hiệu ứng hồi phục tức thời VÀ hiệu ứng buff tạm thời, hãy dùng CẢ HAI tag: \\\`[STATS_UPDATE: sinhLuc=+Y]\`\\\` cho phần hồi phục và \\\`[STATUS_EFFECT_APPLY: ...]\`\\\` cho phần buff.
+        *   Đối với các chỉ số không có trong hệ thống người chơi (ví dụ: "mị lực", "dục vọng" từ ví dụ trên), hãy mô tả chúng trong thuộc tính \`specialEffects\` của tag \\\`STATUS_EFFECT_APPLY\\\`.
 
 15. **Tag \\\`[REMOVE_BINH_CANH_EFFECT: kinhNghiemGain=X]\`\\\` (Chỉ khi \`isCultivationEnabled=true\`):** Dùng khi nhân vật có cơ duyên đột phá khỏi bình cảnh. \`X\` là lượng kinh nghiệm nhỏ (ví dụ 1 hoặc 10) được cộng thêm để vượt qua giới hạn cũ. Tag này sẽ tự động đặt \`hieuUngBinhCanh=false\`.
     *   **VÍ DỤ (Allowed):** \\\`[REMOVE_BINH_CANH_EFFECT: kinhNghiemGain=10]\`\\\`
 
-16. **Luôn cung cấp 3 đến 4 lựa chọn hành động mới.** Mỗi lựa chọn phải được trả về dưới dạng tag riêng biệt: \\\`[CHOICE: "Nội dung lựa chọn"]\\\`.
+16. **LỰA CHỌN HÀNH ĐỘNG MỚI (QUAN TRỌNG):**
+    *   Luôn cung cấp 3 đến 4 lựa chọn hành động mới.
+    *   **ĐỊNH DẠNG BẮT BUỘC CHO MỖI LỰA CHỌN:** \\\`[CHOICE: "Nội dung lựa chọn (Thành công: X% - Độ khó '${worldConfig?.difficulty || 'Thường'}', Lợi ích: Mô tả lợi ích khi thành công. Rủi ro: Mô tả rủi ro khi thất bại)"]\`\\\`.
+    *   \`X%\`: Tỉ lệ thành công ước tính. PHẢI phản ánh Độ Khó của game (xem hướng dẫn ở trên).
+    *   \`Lợi ích\`: Mô tả rõ ràng những gì người chơi có thể nhận được nếu hành động thành công (ví dụ: vật phẩm, kinh nghiệm, thông tin, thay đổi thiện cảm NPC, tiến triển nhiệm vụ).
+    *   \`Rủi ro\`: Mô tả rõ ràng những hậu quả tiêu cực nếu hành động thất bại (ví dụ: mất máu, bị phát hiện, nhiệm vụ thất bại, giảm thiện cảm).
+    *   **Ví dụ (Độ khó 'Thường'):** \\\`[CHOICE: "Thử thuyết phục lão nông (Thành công: 65% - Độ khó 'Thường', Lợi ích: Biết được lối vào bí mật, +10 thiện cảm. Rủi ro: Bị nghi ngờ, -5 thiện cảm, lão nông báo quan)"]\`\\\`
+    *   **Ví dụ (Độ khó 'Ác Mộng'):** \\\`[CHOICE: "Một mình đối đầu Hắc Long (Thành công: 20% - Độ khó 'Ác Mộng', Lợi ích: Nếu thắng, nhận danh hiệu 'Diệt Long Giả', vô số bảo vật. Rủi ro: Gần như chắc chắn tử vong, mất toàn bộ vật phẩm không khóa)"]\`\\\`
+
 17. **Tăng lượt chơi:** Kết thúc phản hồi bằng tag \\\`[STATS_UPDATE: turn=+1]\\\`. **KHÔNG được quên tag này.**
-18. **Duy trì tính logic và nhất quán của câu chuyện.**
+18. **Duy trì tính logic và nhất quán của câu chuyện.** **QUAN TRỌNG:** Diễn biến tiếp theo của bạn PHẢI phản ánh kết quả (thành công hay thất bại) của hành động người chơi đã chọn, dựa trên Tỉ Lệ Thành Công, Lợi Ích và Rủi Ro bạn vừa xác định cho lựa chọn đó. Đừng chỉ kể rằng người chơi đã chọn, hãy kể điều gì đã xảy ra.
 19. **Mô tả kết quả hành động một cách chi tiết và hấp dẫn.**
 20. **Trao Kinh Nghiệm (nếu có hệ thống):** Khi nhân vật hoàn thành hành động có ý nghĩa, sử dụng tag \\\`[STATS_UPDATE: kinhNghiem=+X%]\`\\\` hoặc \\\`[STATS_UPDATE: kinhNghiem=+X]\\\`\\\`.
 21. **RẤT QUAN TRỌNG** Khi không có nhiệm vu hiện tại thì hãy ưu tiên đưa ra cho người chơi thêm nhiệm vụ mới dựa vào câu chuyện hiện tại và mục tiêu, phương hướng của nhân vật chính.
@@ -222,11 +324,6 @@ ${isCultivationEnabled ? `23. **CẤM TUYỆT ĐỐI (NẾU CÓ TU LUYỆN):** K
 24. **CẤM TUYỆT ĐỐI:** Khi trả về một tag, dòng chứa tag đó KHÔNG ĐƯỢC chứa bất kỳ ký tự backslash ("\\") nào khác ngoài những ký tự cần thiết bên trong giá trị của tham số (ví dụ như trong chuỗi JSON của \`statBonusesJSON\`).
 25. **CẤM TUYỆT ĐỐI:** Không trả về "Hệ thống: câu lệnh hệ thống " mà bắt buộc sử dụng tag đã được quy định khi muốn thêm, thay đổi, xóa bất cứ thực thể hay hiệu ứng nào.
 
-**BẮT ĐẦU PHIÊU LƯU:**
-Hãy bắt đầu câu chuyện cho thể loại "${effectiveGenre}". Mô tả khung cảnh đầu tiên, tình huống nhân vật đang gặp phải.
-Đảm bảo sử dụng các tag khởi tạo cần thiết (\\\`PLAYER_STATS_INIT\\\`, \\\`ITEM_ACQUIRED\\\` cho vật phẩm khởi đầu, \\\`SKILL_LEARNED\\\` cho kỹ năng khởi đầu, v.v.) như đã hướng dẫn ở các điểm 1, 2, 3 của "QUY TẮC HỆ THỐNG (CHO VIỆC KHỞI TẠO BAN ĐẦU)".
-Luôn luôn có một nhiệm vụ đầu tiên qua tag \\\`[QUEST_ASSIGNED]\\\`.
-Sau khi hoàn thành tất cả các tag khởi tạo, hãy viết lời kể đầu tiên, sau đó cung cấp các lựa chọn hành động cho người chơi bằng tag \\\`[CHOICE: "..." ]\\\`.
-Cuối cùng, KẾT THÚC TOÀN BỘ PHẢN HỒI của bạn (bao gồm cả lời kể và các lựa chọn) bằng tag \\\`[STATS_UPDATE: turn=+1]\\\` theo quy tắc chung số 17 ở trên.
+**TIẾP TỤC CÂU CHUYỆN:** Dựa trên **HƯỚNG DẪN TỪ NGƯỜI CHƠI**, **ĐỘ DÀI PHẢN HỒI MONG MUỐN** và **TOÀN BỘ BỐI CẢNH GAME**, hãy tiếp tục câu chuyện cho thể loại "${effectiveGenre}". Mô tả kết quả, cập nhật trạng thái game bằng tags, và cung cấp các lựa chọn hành động mới (theo định dạng đã hướng dẫn ở mục 16). Và đưa ra ít nhất một nhiệm vụ khởi đầu dựa trên mục tiêu của nhân vật.
 `;
 };

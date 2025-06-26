@@ -1,9 +1,11 @@
 
 import React, { useState, useEffect, useCallback, useRef, ChangeEvent } from 'react';
-import { GameScreen, SaveGameMeta, FirebaseUser, StorageType, SaveGameData } from '../types';
+import { GameScreen, SaveGameMeta, StorageType, SaveGameData, KnowledgeBase, GameMessage, TurnHistoryEntry } from '../types';
 import Button from './ui/Button';
 import Spinner from './ui/Spinner';
-import { VIETNAMESE, APP_VERSION } from '../constants';
+import { VIETNAMESE, APP_VERSION, KEYFRAME_INTERVAL } from '../constants';
+import * as jsonpatch from "fast-json-patch"; 
+import pako from 'pako';
 
 // Helper function to format bytes
 function formatBytes(bytes: number | undefined, decimals: number = 2): string {
@@ -18,18 +20,16 @@ function formatBytes(bytes: number | undefined, decimals: number = 2): string {
 
 interface ImportExportScreenProps {
   setCurrentScreen: (screen: GameScreen) => void;
-  storageType: StorageType;
-  firebaseUser: FirebaseUser | null;
+  storageType: StorageType; 
   notify: (message: string, type: 'success' | 'error') => void;
   fetchSaveGames: () => Promise<SaveGameMeta[]>;
   loadSpecificGameData: (saveId: string) => Promise<SaveGameData | null>;
-  importGameData: (gameData: Omit<SaveGameData, 'id' | 'timestamp'>) => Promise<void>;
+  importGameData: (gameData: Omit<SaveGameData, 'id' | 'timestamp'> & { name: string }) => Promise<void>;
 }
 
 const ImportExportScreen: React.FC<ImportExportScreenProps> = ({
   setCurrentScreen,
-  storageType,
-  firebaseUser,
+  storageType, 
   notify,
   fetchSaveGames,
   loadSpecificGameData,
@@ -46,11 +46,6 @@ const ImportExportScreen: React.FC<ImportExportScreenProps> = ({
   const loadSaveSlots = useCallback(async () => {
     setIsFetchingSlots(true);
     try {
-      if (storageType === 'cloud' && !firebaseUser) {
-        notify(VIETNAMESE.signInRequiredForLoad, 'error');
-        setCurrentScreen(GameScreen.Initial); // Redirect if not signed in for cloud
-        return;
-      }
       const fetchedSaves = await fetchSaveGames();
       setSaveSlots(fetchedSaves);
     } catch (e) {
@@ -59,53 +54,115 @@ const ImportExportScreen: React.FC<ImportExportScreenProps> = ({
     } finally {
       setIsFetchingSlots(false);
     }
-  }, [storageType, firebaseUser, fetchSaveGames, notify, setCurrentScreen]);
+  }, [fetchSaveGames, notify]); 
 
   useEffect(() => {
     loadSaveSlots();
   }, [loadSaveSlots]);
 
-  const handleExport = async () => {
+  const reconstructSnapshotsForExport = (gameData: SaveGameData): SaveGameData => {
+    if (gameData.knowledgeBase && gameData.knowledgeBase.turnHistory) {
+        let lastKeyframeKbSnapshot: KnowledgeBase | null = null;
+        let lastKeyframeMessagesSnapshot: GameMessage[] | null = null;
+        const reconstructedTurnHistory: TurnHistoryEntry[] = [];
+
+        for (const entry of gameData.knowledgeBase.turnHistory) {
+            if (entry.type === 'keyframe') {
+                lastKeyframeKbSnapshot = JSON.parse(JSON.stringify(entry.knowledgeBaseSnapshot));
+                lastKeyframeMessagesSnapshot = JSON.parse(JSON.stringify(entry.gameMessagesSnapshot));
+                reconstructedTurnHistory.push(entry);
+            } else if (entry.type === 'delta') {
+                if (!lastKeyframeKbSnapshot || !lastKeyframeMessagesSnapshot || !entry.knowledgeBaseDelta || !entry.gameMessagesDelta) {
+                    console.error('Cannot reconstruct delta frame for export, missing keyframe or delta data.', entry);
+                    reconstructedTurnHistory.push(entry.knowledgeBaseSnapshot && entry.gameMessagesSnapshot ? entry : {...entry, knowledgeBaseSnapshot: {} as KnowledgeBase, gameMessagesSnapshot: []});
+                    continue;
+                }
+                let newKbSnapshotForDelta = lastKeyframeKbSnapshot;
+                if(entry.knowledgeBaseDelta.length > 0){
+                     newKbSnapshotForDelta = jsonpatch.applyPatch(
+                        JSON.parse(JSON.stringify(lastKeyframeKbSnapshot)),
+                        entry.knowledgeBaseDelta
+                    ).newDocument as KnowledgeBase;
+                }
+               
+                let newMessagesSnapshotForDelta = lastKeyframeMessagesSnapshot;
+                if(entry.gameMessagesDelta.length > 0) {
+                    newMessagesSnapshotForDelta = jsonpatch.applyPatch(
+                        JSON.parse(JSON.stringify(lastKeyframeMessagesSnapshot)),
+                        entry.gameMessagesDelta
+                    ).newDocument as GameMessage[];
+                }
+                
+                reconstructedTurnHistory.push({
+                    ...entry,
+                    knowledgeBaseSnapshot: newKbSnapshotForDelta,
+                    gameMessagesSnapshot: newMessagesSnapshotForDelta,
+                });
+                lastKeyframeKbSnapshot = newKbSnapshotForDelta;
+                lastKeyframeMessagesSnapshot = newMessagesSnapshotForDelta;
+            } else {
+                reconstructedTurnHistory.push(entry);
+            }
+        }
+        gameData.knowledgeBase.turnHistory = reconstructedTurnHistory;
+    }
+    return gameData;
+  };
+
+
+  const handleExport = async (optimized: boolean = false) => {
     if (!selectedSaveForExport) {
       notify(VIETNAMESE.noSaveSelectedForExport, 'error');
       return;
     }
     setIsExporting(true);
     try {
-      const gameData = await loadSpecificGameData(selectedSaveForExport);
+      let gameData = await loadSpecificGameData(selectedSaveForExport);
       if (!gameData) {
         notify(VIETNAMESE.errorLoadingGame + ": Không tìm thấy file lưu để xuất.", 'error');
         setIsExporting(false);
         return;
       }
 
-      // Prepare data for export (remove server-specific ID if any, keep original timestamp)
+      // If exporting full JSON (not optimized), reconstruct full snapshots
+      if (!optimized) {
+        gameData = reconstructSnapshotsForExport(gameData);
+      }
+      // For optimized export, gameData from loadSpecificGameData is already optimized (deltas don't have full snapshots)
+
       const exportData: SaveGameData = {
         name: gameData.name,
-        timestamp: gameData.timestamp instanceof Date ? gameData.timestamp.toISOString() : gameData.timestamp, // Ensure ISO string for JSON
+        timestamp: gameData.timestamp instanceof Date ? gameData.timestamp.toISOString() : gameData.timestamp,
         knowledgeBase: gameData.knowledgeBase,
         gameMessages: gameData.gameMessages,
         appVersion: gameData.appVersion || APP_VERSION,
       };
 
       const jsonString = JSON.stringify(exportData, null, 2);
-      const blob = new Blob([jsonString], { type: 'application/json' });
+      let blob: Blob;
+      let fileName: string;
+      
+      let safeName = gameData.name.replace(/[^a-z0-9_-\s]/gi, '').replace(/\s+/g, '-').toLowerCase();
+      if (!safeName) safeName = 'daodoai-exported-save';
+
+      if (optimized) {
+        const compressed = pako.gzip(jsonString);
+        blob = new Blob([compressed], { type: 'application/gzip' });
+        fileName = `${safeName}.sav.gz`;
+      } else {
+        blob = new Blob([jsonString], { type: 'application/json' });
+        fileName = `${safeName}.json`;
+      }
+      
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
-      
-      // Use gameData.name for the filename, sanitized
-      let safeName = gameData.name.replace(/[^a-z0-9_-\s]/gi, '').replace(/\s+/g, '-').toLowerCase();
-      if (!safeName) { // Fallback if name is empty or results in empty after sanitization
-        safeName = 'daodoai-exported-save';
-      }
-      link.download = `${safeName}.json`; // New filename convention
-
+      link.download = fileName;
       link.href = url;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      notify(VIETNAMESE.dataExportedSuccess, 'success');
+      notify(optimized ? "Xuất file tối ưu thành công!" : VIETNAMESE.dataExportedSuccess, 'success');
     } catch (e) {
       console.error("Error exporting game data:", e);
       notify(VIETNAMESE.errorExportingData + (e instanceof Error ? `: ${e.message}` : ''), 'error');
@@ -129,41 +186,64 @@ const ImportExportScreen: React.FC<ImportExportScreenProps> = ({
     }
     setIsImporting(true);
     try {
-      const fileContent = await fileToImport.text();
+      let fileContent: string;
+      if (fileToImport.name.endsWith('.gz') || fileToImport.name.endsWith('.sav.gz')) {
+        const fileBuffer = await fileToImport.arrayBuffer();
+        fileContent = pako.inflate(new Uint8Array(fileBuffer), { to: 'string' });
+      } else {
+        fileContent = await fileToImport.text();
+      }
+      
       const parsedData = JSON.parse(fileContent);
 
-      // Basic validation
       if (
         !parsedData ||
         typeof parsedData !== 'object' ||
         !parsedData.knowledgeBase ||
         !parsedData.gameMessages ||
-        !parsedData.name || // Ensure original name exists in JSON for potential reference
-        !parsedData.timestamp
+        !parsedData.name || 
+        !parsedData.timestamp // timestamp might be string here
       ) {
         throw new Error(VIETNAMESE.invalidJsonFile);
       }
       
       const jsonFilename = fileToImport.name;
-      // Get filename without extension for the save name
-      const saveNameFromFilename = jsonFilename.substring(0, jsonFilename.lastIndexOf('.')) || jsonFilename;
+      let saveNameFromFilename = jsonFilename.substring(0, jsonFilename.lastIndexOf('.'));
+      if (jsonFilename.endsWith('.sav.gz')) { // Handle .sav.gz double extension
+        saveNameFromFilename = jsonFilename.substring(0, jsonFilename.lastIndexOf('.sav.gz'));
+      } else if (jsonFilename.endsWith('.json') || jsonFilename.endsWith('.gz')) {
+         saveNameFromFilename = jsonFilename.substring(0, jsonFilename.lastIndexOf('.'));
+      }
+      saveNameFromFilename = saveNameFromFilename || jsonFilename;
 
-      const dataToImport: Omit<SaveGameData, 'id' | 'timestamp'> = {
-        name: saveNameFromFilename, // Use filename (without extension) as the base name for the save
-        knowledgeBase: parsedData.knowledgeBase,
+
+      // Reconstruct snapshots if importing from a standard JSON (which has full snapshots)
+      // For optimized files, snapshots are already stripped or will be reconstructed on load by App.tsx
+      // The key is that importGameData passes data that saveGameToIndexedDB can handle.
+      // saveGameToIndexedDB will optimize based on `type` and `KEYFRAME_INTERVAL` logic.
+      // If it's an optimized import, the deltas are already there, snapshots are not.
+      
+      // The critical part: Ensure turnHistory from imported JSON (full snapshots) is processed
+      // by saveGameToIndexedDB to correctly create deltas and strip snapshots for delta entries in DB.
+      // If importing an optimized file, turnHistory entries for deltas will lack snapshots,
+      // saveGameToIndexedDB should correctly preserve the deltas.
+      
+      const dataToImport: Omit<SaveGameData, 'id' | 'timestamp'> & { name: string } = {
+        name: saveNameFromFilename, 
+        knowledgeBase: parsedData.knowledgeBase, // This KB will have its turnHistory processed by saveGameToIndexedDB
         gameMessages: parsedData.gameMessages,
         appVersion: parsedData.appVersion || APP_VERSION,
       };
 
-      await importGameData(dataToImport); // Service will prefix this name
+      await importGameData(dataToImport); 
       setFileToImport(null); 
       if(fileInputRef.current) fileInputRef.current.value = ""; 
       loadSaveSlots(); 
     } catch (e) {
       console.error("Error importing game data:", e);
       const errorMessage = e instanceof Error ? e.message : String(e);
-      if(errorMessage.includes("JSON.parse")) {
-        notify(VIETNAMESE.invalidJsonFile + ": Lỗi phân tích cú pháp JSON.", 'error');
+      if(errorMessage.includes("JSON.parse") || errorMessage.toLowerCase().includes("decode")) {
+        notify(VIETNAMESE.invalidJsonFile + ": Lỗi phân tích cú pháp JSON hoặc giải nén.", 'error');
       } else {
         notify(VIETNAMESE.errorImportingData + `: ${errorMessage}`, 'error');
       }
@@ -184,14 +264,13 @@ const ImportExportScreen: React.FC<ImportExportScreenProps> = ({
       <div className="w-full max-w-2xl bg-gray-900 shadow-2xl rounded-xl p-6 sm:p-8">
         <div className="flex justify-between items-center mb-8">
           <h2 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-lime-400 via-green-500 to-emerald-600">
-            {VIETNAMESE.importExportScreenTitle}
+            {VIETNAMESE.importExportScreenTitle} (Cục bộ)
           </h2>
           <Button variant="ghost" onClick={() => setCurrentScreen(GameScreen.Initial)}>
             {VIETNAMESE.goBackButton}
           </Button>
         </div>
 
-        {/* Export Section */}
         <section className="mb-10">
           <h3 className="text-2xl font-semibold text-green-400 mb-4 pb-2 border-b border-gray-700">{VIETNAMESE.exportSectionTitle}</h3>
           {isFetchingSlots && <Spinner text="Đang tải danh sách lưu..." size="sm" className="my-4" />}
@@ -217,28 +296,39 @@ const ImportExportScreen: React.FC<ImportExportScreenProps> = ({
               </select>
             </div>
           )}
-          <Button
-            variant="primary"
-            className="bg-green-600 hover:bg-green-700 focus:ring-green-500 w-full"
-            onClick={handleExport}
-            isLoading={isExporting}
-            disabled={!selectedSaveForExport || isFetchingSlots}
-            loadingText={VIETNAMESE.exportingData}
-          >
-            {VIETNAMESE.exportSelectedButton}
-          </Button>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Button
+              variant="primary"
+              className="bg-green-600 hover:bg-green-700 focus:ring-green-500 flex-1"
+              onClick={() => handleExport(false)}
+              isLoading={isExporting}
+              disabled={!selectedSaveForExport || isFetchingSlots}
+              loadingText={VIETNAMESE.exportingData}
+            >
+              {VIETNAMESE.exportSelectedButton} (Đầy đủ .json)
+            </Button>
+            <Button
+              variant="primary"
+              className="bg-teal-600 hover:bg-teal-700 focus:ring-teal-500 flex-1"
+              onClick={() => handleExport(true)}
+              isLoading={isExporting}
+              disabled={!selectedSaveForExport || isFetchingSlots}
+              loadingText="Đang nén & xuất..."
+            >
+              Xuất Tối Ưu (.sav.gz)
+            </Button>
+          </div>
         </section>
 
-        {/* Import Section */}
         <section>
           <h3 className="text-2xl font-semibold text-sky-400 mb-4 pb-2 border-b border-gray-700">{VIETNAMESE.importSectionTitle}</h3>
           <div className="mb-4">
-            <label htmlFor="jsonFile" className="block text-sm font-medium text-gray-300 mb-1">{VIETNAMESE.selectJsonFile}</label>
+            <label htmlFor="jsonFile" className="block text-sm font-medium text-gray-300 mb-1">{VIETNAMESE.selectJsonFile} (hoặc .gz, .sav.gz)</label>
             <input
               type="file"
               id="jsonFile"
               ref={fileInputRef}
-              accept=".json,application/json"
+              accept=".json,.gz,.sav.gz,application/json,application/gzip"
               onChange={handleFileChange}
               className="w-full p-2 text-sm text-gray-300 bg-gray-700 border border-gray-600 rounded-md file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-sky-500 file:text-white hover:file:bg-sky-600 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
             />

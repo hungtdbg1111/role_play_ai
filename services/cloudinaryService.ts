@@ -3,17 +3,14 @@ import {
   CLOUDINARY_CLOUD_NAME,
   CLOUDINARY_FOLDER_PLAYER,
   CLOUDINARY_FOLDER_NPC_MALE,
-  CLOUDINARY_FOLDER_NPC_WOMEN
+  CLOUDINARY_FOLDER_NPC_WOMEN,
+  // CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET are no longer directly used here for signing.
+  // They are expected to be environment variables in the Netlify function.
 } from '../constants';
 
-/**
- * Uploads a base64 encoded image string to Cloudinary using a server-generated signature.
- * @param base64ImageString The raw base64 string of the image data (without data:image/png;base64, prefix).
- * @param type Determines which folder to use ('player', 'npc_male', 'npc_female').
- * @param publicId Optional public_id for the uploaded image in Cloudinary.
- * @returns A Promise that resolves to the secure_url of the uploaded image.
- * @throws An error if Cloudinary configuration is missing or upload fails.
- */
+// Netlify function endpoint
+const SIGNATURE_FUNCTION_ENDPOINT = '/.netlify/functions/generate-cloudinary-signature';
+
 export async function uploadImageToCloudinary(
   base64ImageString: string,
   type: 'player' | 'npc_male' | 'npc_female', 
@@ -26,7 +23,7 @@ export async function uploadImageToCloudinary(
     console.error(errorMessage);
     throw new Error(errorMessage);
   }
-
+  
   let folderName: string;
   if (type === 'player') {
     folderName = CLOUDINARY_FOLDER_PLAYER;
@@ -37,7 +34,7 @@ export async function uploadImageToCloudinary(
   }
   
   const timestamp = Math.round(Date.now() / 1000);
-  const paramsToSignForNetlify: Record<string, string | number> = {
+  const paramsToSign: Record<string, string | number> = {
     timestamp: timestamp,
     folder: folderName,
   };
@@ -45,65 +42,70 @@ export async function uploadImageToCloudinary(
   let sanitizedPublicId: string | undefined = undefined;
   if (publicId) {
     sanitizedPublicId = publicId.replace(/[\/\?&#%<>]/g, '_');
-    paramsToSignForNetlify.public_id = sanitizedPublicId;
+    paramsToSign.public_id = sanitizedPublicId;
   }
   
-  let signatureData;
+  let signature: string;
+  let apiKeyToUse: string;
+  let timestampToUse: number;
+
   try {
-    // Call the Netlify function to get the signature
-    const sigResponse = await fetch('/.netlify/functions/generate-cloudinary-signature', {
+    const sigResponse = await fetch(SIGNATURE_FUNCTION_ENDPOINT, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ paramsToSign: paramsToSignForNetlify }),
+      body: JSON.stringify({ paramsToSign }),
     });
 
     if (!sigResponse.ok) {
-      const errorBody = await sigResponse.text();
-      console.error("Failed to get signature from Netlify function:", sigResponse.status, errorBody);
-      throw new Error(`Lỗi lấy chữ ký Cloudinary từ server: ${sigResponse.statusText} - ${errorBody}`);
+      const errorBody = await sigResponse.json();
+      throw new Error(`Failed to get signature from server: ${sigResponse.status} ${sigResponse.statusText}. Details: ${errorBody?.message || 'Unknown server error'}`);
     }
-    signatureData = await sigResponse.json();
-    if (!signatureData.signature || !signatureData.apiKey || typeof signatureData.timestamp === 'undefined') {
-      throw new Error("Phản hồi chữ ký không hợp lệ từ server. Thiếu signature, apiKey, hoặc timestamp.");
+    const sigData = await sigResponse.json();
+    signature = sigData.signature;
+    apiKeyToUse = sigData.apiKey;
+    timestampToUse = sigData.timestamp; // Use timestamp from server response to ensure consistency
+    
+    if (!signature || !apiKeyToUse || typeof timestampToUse !== 'number') {
+        throw new Error("Invalid signature data received from server.");
     }
+
   } catch (error) {
-    console.error('Error fetching signature from Netlify function:', error);
-    throw new Error(`Không thể lấy chữ ký Cloudinary: ${(error as Error).message}`);
+    console.error("Error fetching Cloudinary signature:", error);
+    const userMessage = error instanceof Error ? error.message : "Lỗi kết nối đến dịch vụ ký Cloudinary.";
+    throw new Error(`Không thể lấy chữ ký Cloudinary: ${userMessage}`);
   }
-
-  const url = `https://api.cloudinary.com/v1_1/${effectiveCloudinaryCloudName}/image/upload`;
   
-  // Ensure the base64 string is prefixed for Cloudinary direct upload
-  const dataUri = base64ImageString.startsWith('data:image') ? base64ImageString : `data:image/png;base64,${base64ImageString}`;
-
   const formData = new FormData();
-  formData.append('file', dataUri); 
-  formData.append('api_key', signatureData.apiKey); // Use API key from server response
-  formData.append('timestamp', String(signatureData.timestamp)); // Use timestamp from server response
-  formData.append('signature', signatureData.signature); // Use signature from server response
+  formData.append('file', `data:image/png;base64,${base64ImageString}`);
+  formData.append('api_key', apiKeyToUse);
+  formData.append('timestamp', timestampToUse.toString());
+  formData.append('signature', signature);
   formData.append('folder', folderName);
-
   if (sanitizedPublicId) {
     formData.append('public_id', sanitizedPublicId);
   }
-
+  
+  const cloudinaryUploadUrl = `https://api.cloudinary.com/v1_1/${effectiveCloudinaryCloudName}/image/upload`;
   try {
-    const response = await fetch(url, {
+    const uploadResponse = await fetch(cloudinaryUploadUrl, {
       method: 'POST',
       body: formData,
     });
-    const data = await response.json();
 
-    if (data.secure_url) {
-      return data.secure_url;
-    } else {
-      console.error('Cloudinary upload failed:', data.error?.message || 'Unknown error', data);
-      throw new Error(data.error?.message || 'Cloudinary upload thất bại');
+    if (!uploadResponse.ok) {
+      const errorBody = await uploadResponse.text(); 
+      throw new Error(`Cloudinary upload failed: ${uploadResponse.status} ${uploadResponse.statusText}. Details: ${errorBody}`);
     }
+
+    const uploadResult = await uploadResponse.json();
+    if (!uploadResult.secure_url) {
+      throw new Error("Cloudinary upload succeeded but did not return a secure_url.");
+    }
+    return uploadResult.secure_url;
   } catch (error) {
-    console.error('Lỗi khi tải ảnh lên Cloudinary:', error);
-    throw error;
+    console.error("Error during Cloudinary upload POST request:", error);
+    throw new Error(`Tải ảnh lên Cloudinary thất bại: ${error instanceof Error ? error.message : String(error)}`);
   }
 }

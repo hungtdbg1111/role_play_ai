@@ -10,8 +10,8 @@ import {
   HARM_CATEGORIES,      
   HARM_BLOCK_THRESHOLDS, 
   DEFAULT_API_CONFIG,
-  AVAILABLE_IMAGE_MODELS, // Added
-  DEFAULT_IMAGE_MODEL_ID // Added
+  AVAILABLE_IMAGE_MODELS, 
+  DEFAULT_IMAGE_MODEL_ID
 } from '../constants';
 import { getApiSettings } from '../services/geminiService'; 
 import { HarmCategory, HarmBlockThreshold } from '@google/genai'; 
@@ -25,9 +25,10 @@ const ApiSettingsScreen: React.FC<ApiSettingsScreenProps> = ({ setCurrentScreen,
   const [currentApiKeySource, setCurrentApiKeySource] = useState<'system' | 'user'>(DEFAULT_API_CONFIG.apiKeySource);
   const [userApiKeyInput, setUserApiKeyInput] = useState<string>('');
   const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_API_CONFIG.model);
-  const [selectedImageModel, setSelectedImageModel] = useState<string>(DEFAULT_API_CONFIG.imageModel); // New state for image model
+  const [selectedImageModel, setSelectedImageModel] = useState<string>(DEFAULT_API_CONFIG.imageModel);
   const [safetySettings, setSafetySettings] = useState<SafetySetting[]>(DEFAULT_API_CONFIG.safetySettings);
   const [autoGenerateNpcAvatars, setAutoGenerateNpcAvatars] = useState<boolean>(DEFAULT_API_CONFIG.autoGenerateNpcAvatars);
+  // useNetlifyForCloudinary state removed
   const [error, setError] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<string>('');
 
@@ -36,9 +37,10 @@ const ApiSettingsScreen: React.FC<ApiSettingsScreenProps> = ({ setCurrentScreen,
     setCurrentApiKeySource(loadedSettings.apiKeySource);
     setUserApiKeyInput(loadedSettings.userApiKey);
     setSelectedModel(loadedSettings.model);
-    setSelectedImageModel(loadedSettings.imageModel || DEFAULT_IMAGE_MODEL_ID); // Load image model
+    setSelectedImageModel(loadedSettings.imageModel || DEFAULT_IMAGE_MODEL_ID);
     setSafetySettings(loadedSettings.safetySettings);
     setAutoGenerateNpcAvatars(loadedSettings.autoGenerateNpcAvatars);
+    // useNetlifyForCloudinary loading removed
   }, []);
 
   const handleUserApiKeyChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -52,7 +54,7 @@ const ApiSettingsScreen: React.FC<ApiSettingsScreenProps> = ({ setCurrentScreen,
     if (successMessage) setSuccessMessage('');
   };
 
-  const handleImageModelChange = (e: ChangeEvent<HTMLSelectElement>) => { // New handler
+  const handleImageModelChange = (e: ChangeEvent<HTMLSelectElement>) => { 
     setSelectedImageModel(e.target.value);
     if (successMessage) setSuccessMessage('');
   };
@@ -77,6 +79,8 @@ const ApiSettingsScreen: React.FC<ApiSettingsScreenProps> = ({ setCurrentScreen,
     setAutoGenerateNpcAvatars(e.target.checked);
     if (successMessage) setSuccessMessage('');
   };
+  
+  // handleUseNetlifyForCloudinaryChange removed
 
   const handleSaveSettings = () => {
     if (currentApiKeySource === 'user' && !userApiKeyInput.trim()) {
@@ -89,9 +93,10 @@ const ApiSettingsScreen: React.FC<ApiSettingsScreenProps> = ({ setCurrentScreen,
       apiKeySource: currentApiKeySource,
       userApiKey: currentApiKeySource === 'user' ? userApiKeyInput.trim() : '', 
       model: selectedModel,
-      imageModel: selectedImageModel, // Save image model
+      imageModel: selectedImageModel,
       safetySettings: safetySettings,
       autoGenerateNpcAvatars: autoGenerateNpcAvatars,
+      // useNetlifyForCloudinary removed
     };
     localStorage.setItem(API_SETTINGS_STORAGE_KEY, JSON.stringify(settingsToSave));
     
@@ -100,6 +105,8 @@ const ApiSettingsScreen: React.FC<ApiSettingsScreenProps> = ({ setCurrentScreen,
   };
   
   const apiInfoText = currentApiKeySource === 'system' ? VIETNAMESE.apiInfoSystem : VIETNAMESE.apiInfoUser;
+  const cloudinaryInfoText = VIETNAMESE.cloudinaryInfo; // Simplified
+
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gray-800 p-4 sm:p-6">
@@ -206,14 +213,15 @@ const ApiSettingsScreen: React.FC<ApiSettingsScreenProps> = ({ setCurrentScreen,
               ))}
             </select>
           </div>
-
+          
           <div className="pt-4 border-t border-gray-700">
-            <label htmlFor="autoGenerateNpcAvatars" className="flex items-center cursor-pointer">
+            <h3 className="text-lg font-semibold text-gray-200 mb-2">Cài Đặt Cloudinary (Lưu Ảnh)</h3>
+            <label htmlFor="autoGenerateNpcAvatars" className="flex items-center cursor-pointer mb-2">
               <div className="relative">
                 <input
                   type="checkbox"
                   id="autoGenerateNpcAvatars"
-                  className="sr-only" // Hide default checkbox
+                  className="sr-only" 
                   checked={autoGenerateNpcAvatars}
                   onChange={handleAutoGenerateNpcAvatarsChange}
                 />
@@ -222,7 +230,9 @@ const ApiSettingsScreen: React.FC<ApiSettingsScreenProps> = ({ setCurrentScreen,
               </div>
               <span className="ml-3 text-sm font-medium text-gray-300">{VIETNAMESE.autoGenerateNpcAvatarsLabel}</span>
             </label>
-            <p className="text-xs text-gray-400 mt-1 ml-10">{VIETNAMESE.autoGenerateNpcAvatarsInfo}</p>
+            <p className="text-xs text-gray-400 mt-1 ml-10 mb-3">{VIETNAMESE.autoGenerateNpcAvatarsInfo}</p>
+            {/* useNetlifyForCloudinary toggle removed */}
+             <p className="text-xs text-gray-400 mt-1 ml-10">{cloudinaryInfoText}</p>
           </div>
 
 
@@ -278,9 +288,6 @@ const ApiSettingsScreen: React.FC<ApiSettingsScreenProps> = ({ setCurrentScreen,
        <p className="mt-8 text-xs text-gray-500 text-center max-w-md px-2">
         {apiInfoText}
       </p>
-      {autoGenerateNpcAvatars && (
-        <p className="mt-2 text-xs text-yellow-400 text-center max-w-md px-2">{VIETNAMESE.cloudinaryInfo}</p>
-      )}
     </div>
   );
 };

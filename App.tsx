@@ -1,20 +1,20 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { GameScreen, KnowledgeBase, GameMessage, WorldSettings, PlayerStats, ApiConfig, FirebaseUser, SaveGameData, StorageType, FirebaseUserConfig, SaveGameMeta, RealmBaseStatDefinition, TurnHistoryEntry, StyleSettings, PlayerActionInputType, EquipmentSlotId, Item as ItemType } from './types';
+import { GameScreen, KnowledgeBase, GameMessage, WorldSettings, PlayerStats, ApiConfig, SaveGameData, StorageType, SaveGameMeta, RealmBaseStatDefinition, TurnHistoryEntry, StyleSettings, PlayerActionInputType, EquipmentSlotId, Item as ItemType, AvatarUploadHandlers, NPC } from './types';
 import InitialScreen from './components/InitialScreen';
 import GameSetupScreen from './components/GameSetupScreen';
-import GameplayScreen from './components/GameplayScreen'; // Corrected path
+import GameplayScreen from './components/GameplayScreen'; 
 import EquipmentScreen from './components/gameplay/EquipmentScreen';
-import CraftingScreen from './components/gameplay/crafting/CraftingScreen'; // Added CraftingScreen
+import CraftingScreen from './components/gameplay/crafting/CraftingScreen'; 
 import ApiSettingsScreen from './components/ApiSettingsScreen';
 import LoadGameScreen from './components/LoadGameScreen';
 import StorageSettingsScreen from './components/StorageSettingsScreen';
 import ImportExportScreen from './components/ImportExportScreen';
 import Spinner from './components/ui/Spinner';
 import Button from './components/ui/Button';
-import { INITIAL_KNOWLEDGE_BASE, VIETNAMESE, APP_VERSION, MAX_AUTO_SAVE_SLOTS, TURNS_PER_PAGE, DEFAULT_TIERED_STATS, MAX_TURN_HISTORY_LENGTH, EQUIPMENT_SLOTS_CONFIG } from './constants';
-import { signOutUser, saveGameToFirestore, loadGamesFromFirestore, loadSpecificGameFromFirestore, deleteGameFromFirestore, importGameToFirestore } from './services/firebaseService';
-import { saveGameToIndexedDB, loadGamesFromIndexedDB, loadSpecificGameFromIndexedDB, deleteGameFromIndexedDB, importGameToIndexedDB } from './services/indexedDBService';
+import { INITIAL_KNOWLEDGE_BASE, VIETNAMESE, APP_VERSION, MAX_AUTO_SAVE_SLOTS, TURNS_PER_PAGE, DEFAULT_TIERED_STATS, MAX_TURN_HISTORY_LENGTH, EQUIPMENT_SLOTS_CONFIG, KEYFRAME_INTERVAL } from './constants';
+// Firebase imports removed
+import { saveGameToIndexedDB, loadGamesFromIndexedDB, loadSpecificGameFromIndexedDB, deleteGameFromIndexedDB, importGameToIndexedDB, resetDBConnection as resetIndexedDBConnection } from './services/indexedDBService';
 import * as GameTemplates from './templates';
 import { useAppInitialization } from './hooks/useAppInitialization';
 import { useGameNotifications } from './hooks/useGameNotifications';
@@ -23,6 +23,8 @@ import { useGameActions } from './hooks/useGameActions';
 import { calculateRealmBaseStats, calculateEffectiveStats, getMessagesForPage, performTagProcessing } from './utils/gameLogicUtils'; 
 import { summarizeTurnHistory, getApiSettings as getGeminiApiSettings, countTokens, generateCraftedItemViaAI } from './services/geminiService'; 
 import { uploadImageToCloudinary } from './services/cloudinaryService';
+import * as jsonpatch from "fast-json-patch";
+import { isValidImageUrl } from './utils/imageValidationUtils';
 
 
 export const App: React.FC = () => {
@@ -33,11 +35,10 @@ export const App: React.FC = () => {
     styleSettings,
     setStorageSettings,
     setStyleSettings,
-    firebaseUser,
-    setFirebaseUser,
+    // firebaseUser, setFirebaseUser removed
     isInitialLoading,
     storageInitError,
-    reInitializeFirebase
+    // reInitializeFirebase removed
   } = useAppInitialization();
 
   const { notification, showNotification } = useGameNotifications();
@@ -67,13 +68,14 @@ export const App: React.FC = () => {
 
   const [sentCraftingPromptsLog, setSentCraftingPromptsLog] = useState<string[]>([]);
   const [receivedCraftingResponsesLog, setReceivedCraftingResponsesLog] = useState<string[]>([]);
-  const [sentNpcAvatarPromptsLog, setSentNpcAvatarPromptsLog] = useState<string[]>([]); // New state
+  const [sentNpcAvatarPromptsLog, setSentNpcAvatarPromptsLog] = useState<string[]>([]); 
 
   const [isAutoPlaying, setIsAutoPlaying] = useState<boolean>(false); 
   const [isSavingGame, setIsSavingGame] = useState<boolean>(false);
   const [isAutoSaving, setIsAutoSaving] = useState<boolean>(false); 
   const [isSummarizingOnLoad, setIsSummarizingOnLoad] = useState<boolean>(false);
   const [isCraftingItem, setIsCraftingItem] = useState<boolean>(false);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState<boolean>(false);
 
   const logNpcAvatarPromptCallback = useCallback((prompt: string) => {
     setSentNpcAvatarPromptsLog(prev => [prompt, ...prev].slice(0, 10));
@@ -89,14 +91,11 @@ export const App: React.FC = () => {
   ): Promise<string | null> => {
     if(isAuto) setIsAutoSaving(true); else setIsSavingGame(true);
     try {
-        let newSaveId: string;
-        if (storageSettings.storageType === 'cloud') {
-            if (!firebaseUser) throw new Error(VIETNAMESE.signInRequiredForSave);
-            newSaveId = await saveGameToFirestore(firebaseUser.uid, kbToSave, messagesToSave, saveName, existingId);
-        } else {
-            const idForLocal = typeof existingId === 'string' ? parseInt(existingId, 10) : existingId;
-            newSaveId = await saveGameToIndexedDB(kbToSave, messagesToSave, saveName, isNaN(idForLocal as number) ? existingId : idForLocal);
-        }
+        // KnowledgeBase passed here (kbToSave) contains full snapshots in memory.
+        // saveGameToIndexedDB will handle stripping snapshots for delta entries before DB write.
+        const idForLocal = typeof existingId === 'string' ? parseInt(existingId, 10) : existingId;
+        const newSaveId = await saveGameToIndexedDB(kbToSave, messagesToSave, saveName, isNaN(idForLocal as number) ? existingId : idForLocal);
+        
         if (!isAuto) {
             showNotification(VIETNAMESE.gameSavedSuccess + ` ("${saveName}")`, 'success');
         }
@@ -109,7 +108,7 @@ export const App: React.FC = () => {
     } finally {
         if(isAuto) setIsAutoSaving(false); else setIsSavingGame(false);
     }
-  }, [storageSettings.storageType, firebaseUser, showNotification]);
+  }, [showNotification]);
 
 
   const {
@@ -136,41 +135,165 @@ export const App: React.FC = () => {
     isAutoPlaying,
     setIsAutoPlaying,
     executeSaveGame,
-    storageType: storageSettings.storageType,
-    firebaseUser,
-    logNpcAvatarPromptCallback // Pass new callback
+    storageType: 'local', 
+    firebaseUser: null, 
+    logNpcAvatarPromptCallback 
   });
 
-  const handleSetupCompleteAppWrapper = useCallback(async (settings: WorldSettings, uploadedAvatarBase64Data?: string | null) => {
-    let finalSettings = { ...settings };
+  const handleSetupCompleteAppWrapper = useCallback(async (settingsFromGameSetup: WorldSettings, rawAvatarDataFromGameSetup?: string | null) => {
+    let finalWorldSettings = { ...settingsFromGameSetup };
+    let finalPlayerAvatarUrlForKbConfig: string | undefined = undefined;
+    let base64ToStoreInKb: string | undefined = undefined;
 
-    // If user uploaded a new avatar (base64 data exists)
-    if (uploadedAvatarBase64Data && uploadedAvatarBase64Data.startsWith('data:image')) { 
-      setIsLoadingApi(true); 
-      try {
-        const playerNameSlug = settings.playerName?.replace(/\s+/g, '_').toLowerCase() || `player_${Date.now()}`;
-        // Extract base64 string from data URL
-        const base64StringOnly = uploadedAvatarBase64Data.split(',')[1];
-        const cloudinaryUrl = await uploadImageToCloudinary(base64StringOnly, 'player', `player_${playerNameSlug}`);
-        finalSettings.playerAvatarUrl = cloudinaryUrl; // This will be used by originalHandleSetupComplete
-        console.log("Player avatar uploaded to Cloudinary:", cloudinaryUrl);
-      } catch (uploadError) {
-        console.error("Cloudinary upload failed for player avatar during setup complete:", uploadError);
-        showNotification("Lỗi tải ảnh đại diện lên Cloudinary. Sử dụng ảnh tạm thời (nếu có) hoặc không có ảnh.", "warning");
-        finalSettings.playerAvatarUrl = undefined; 
-      } finally {
-        setIsLoadingApi(false);
-      }
-    } else if (uploadedAvatarBase64Data) { 
-        // This case means uploadedAvatarBase64Data is already a URL (e.g., from AI gen, or random)
-        finalSettings.playerAvatarUrl = uploadedAvatarBase64Data;
+    setIsUploadingAvatar(true);
+
+    if (rawAvatarDataFromGameSetup) {
+        if (rawAvatarDataFromGameSetup.startsWith('data:image')) { // It's base64 data (from file upload or AI gen + Cloudinary fail in tab)
+            base64ToStoreInKb = rawAvatarDataFromGameSetup; 
+            try {
+                const playerNameSlug = finalWorldSettings.playerName?.replace(/\s+/g, '_').toLowerCase() || `player_${Date.now()}`;
+                const base64StringOnly = rawAvatarDataFromGameSetup.split(',')[1];
+                const cloudinaryUrl = await uploadImageToCloudinary(base64StringOnly, 'player', `player_${playerNameSlug}`);
+                finalPlayerAvatarUrlForKbConfig = cloudinaryUrl;
+                base64ToStoreInKb = undefined; // Cloudinary success, KB will use URL, worldConfig will have URL
+            } catch (uploadError) {
+                console.error("Cloudinary upload failed for player avatar during setup complete:", uploadError);
+                showNotification(VIETNAMESE.avatarUploadError + (uploadError instanceof Error ? uploadError.message : ""), "warning");
+                // Cloudinary failed. finalPlayerAvatarUrlForKbConfig remains undefined. base64ToStoreInKb has the data for KB.
+                // finalWorldSettings.playerAvatarUrl will be updated by originalHandleSetupComplete based on base64ToStoreInKb if it's set.
+            }
+        } else if (rawAvatarDataFromGameSetup.startsWith('http')) { // It's already a URL (from random, direct URL, or AI gen + Cloudinary success in tab)
+            const isValidDirectUrl = await isValidImageUrl(rawAvatarDataFromGameSetup);
+            if (isValidDirectUrl) {
+                finalPlayerAvatarUrlForKbConfig = rawAvatarDataFromGameSetup;
+            } else {
+                console.warn(`Invalid direct URL from GameSetupScreen: ${rawAvatarDataFromGameSetup}. Clearing avatar.`);
+                showNotification(VIETNAMESE.avatarUrlInvalid + " Ảnh đại diện sẽ bị xóa.", "warning");
+            }
+        }
+    } else if (finalWorldSettings.playerAvatarUrl && (finalWorldSettings.playerAvatarUrl.startsWith('http'))) {
+        // This case handles if playerAvatarUrl was set directly in settings (e.g. import)
+        // and no new rawAvatarDataFromGameSetup was provided (e.g. user didn't touch avatar controls in this setup session)
+        const isValidDirectUrl = await isValidImageUrl(finalWorldSettings.playerAvatarUrl);
+        if (isValidDirectUrl) {
+            finalPlayerAvatarUrlForKbConfig = finalWorldSettings.playerAvatarUrl;
+        } else {
+            console.warn(`Invalid playerAvatarUrl in settings: ${finalWorldSettings.playerAvatarUrl}. Clearing.`);
+            finalWorldSettings.playerAvatarUrl = undefined; // Clear it from settings
+        }
     }
-    // If uploadedAvatarBase64Data is null/undefined, finalSettings.playerAvatarUrl remains as it was (could be undefined or an AI generated one)
     
-    // originalHandleSetupComplete will use finalSettings.playerAvatarUrl
-    await originalHandleSetupComplete(finalSettings); 
+    // Update worldConfig with the final URL (Cloudinary or direct valid URL) for saving within worldConfig itself
+    finalWorldSettings.playerAvatarUrl = finalPlayerAvatarUrlForKbConfig;
 
-  }, [originalHandleSetupComplete, setIsLoadingApi, showNotification]);
+    setIsUploadingAvatar(false);
+    // Pass finalWorldSettings (with updated playerAvatarUrl).
+    // And pass base64ToStoreInKb (if Cloudinary failed for a base64 input, this will be used for knowledgeBase.playerAvatarData).
+    // If Cloudinary was successful or a direct URL was used, base64ToStoreInKb is undefined.
+    await originalHandleSetupComplete(finalWorldSettings, base64ToStoreInKb);
+  }, [originalHandleSetupComplete, showNotification]);
+
+
+  const handleUpdatePlayerAvatarInKb = useCallback(async (newAvatarUrlOrData: string) => {
+    setIsUploadingAvatar(true);
+    let finalUrlToShow = newAvatarUrlOrData; // Assume it's a URL initially or becomes one
+    let base64ForKbIfUploadFails: string | undefined = undefined;
+
+
+    if (newAvatarUrlOrData.startsWith('data:image')) { // It's base64 data, needs upload
+        base64ForKbIfUploadFails = newAvatarUrlOrData;
+        try {
+            const playerNameSlug = knowledgeBase.worldConfig?.playerName?.replace(/\s+/g, '_').toLowerCase() || `player_${Date.now()}`;
+            const base64StringOnly = newAvatarUrlOrData.split(',')[1];
+            finalUrlToShow = await uploadImageToCloudinary(base64StringOnly, 'player', `player_${playerNameSlug}_ingame`);
+            base64ForKbIfUploadFails = undefined; // Upload success
+        } catch (uploadError) {
+            console.error("Cloudinary upload failed for in-game player avatar update:", uploadError);
+            showNotification(VIETNAMESE.avatarUploadError + (uploadError instanceof Error ? uploadError.message : ""), "error");
+            setIsUploadingAvatar(false);
+            // Don't update KB if upload fails and we intended to upload.
+            // KB will keep its old avatar data.
+            // If we want to store base64 on failure, then we'd proceed to setKnowledgeBase with base64ForKbIfUploadFails.
+            // For now, let's make it an all-or-nothing for Cloudinary upload during gameplay update.
+            // User can re-try.
+            return; 
+        }
+    } else if (newAvatarUrlOrData.startsWith('http')) {
+        const isValid = await isValidImageUrl(newAvatarUrlOrData);
+        if (!isValid) {
+            showNotification(VIETNAMESE.avatarUrlInvalid, "error");
+            setIsUploadingAvatar(false);
+            return;
+        }
+        finalUrlToShow = newAvatarUrlOrData; // URL is valid
+    } else if (newAvatarUrlOrData === '') { // Clearing avatar
+        finalUrlToShow = ''; // Represent as empty string for clearing
+    } else { // Invalid format
+        showNotification("Định dạng avatar không hợp lệ.", "error");
+        setIsUploadingAvatar(false);
+        return;
+    }
+
+
+    setKnowledgeBase(prevKb => {
+      const updatedKb = JSON.parse(JSON.stringify(prevKb)) as KnowledgeBase;
+      // If base64ForKbIfUploadFails is set, it means Cloudinary failed, so store base64.
+      // Otherwise, finalUrlToShow contains either the Cloudinary URL or the validated direct URL.
+      // If finalUrlToShow is empty, it means clearing.
+      updatedKb.playerAvatarData = base64ForKbIfUploadFails || (finalUrlToShow === '' ? undefined : finalUrlToShow);
+      if (updatedKb.worldConfig) {
+        updatedKb.worldConfig.playerAvatarUrl = base64ForKbIfUploadFails || (finalUrlToShow === '' ? undefined : finalUrlToShow);
+      }
+      return updatedKb;
+    });
+    showNotification(finalUrlToShow === '' ? "Đã xóa ảnh đại diện." : VIETNAMESE.avatarUploadSuccess, 'success');
+    setIsUploadingAvatar(false);
+  }, [setKnowledgeBase, showNotification, knowledgeBase.worldConfig?.playerName]);
+
+  const handleUpdateNpcAvatarInKb = useCallback(async (npcId: string, newAvatarUrlOrData: string) => {
+    setIsUploadingAvatar(true); 
+    let finalUrlForNpc = newAvatarUrlOrData;
+    const npcData = knowledgeBase.discoveredNPCs.find(n => n.id === npcId);
+
+    if (newAvatarUrlOrData.startsWith('data:image') && npcData) { 
+        try {
+            const base64StringOnly = newAvatarUrlOrData.split(',')[1];
+            let cloudinaryFolderType: 'npc_male' | 'npc_female' = 'npc_male';
+            if (npcData.gender === 'Nữ') cloudinaryFolderType = 'npc_female';
+            
+            finalUrlForNpc = await uploadImageToCloudinary(base64StringOnly, cloudinaryFolderType, `npc_${npcId}_ingame`);
+        } catch (uploadError) {
+            console.error(`Cloudinary upload failed for NPC ${npcId} avatar update:`, uploadError);
+            showNotification(VIETNAMESE.avatarUploadError + (uploadError instanceof Error ? uploadError.message : ""), "error");
+            setIsUploadingAvatar(false);
+            return; 
+        }
+    } else if (newAvatarUrlOrData.startsWith('http')) {
+        const isValid = await isValidImageUrl(newAvatarUrlOrData);
+        if (!isValid) {
+            showNotification(VIETNAMESE.avatarUrlInvalid, "error");
+            setIsUploadingAvatar(false);
+            return;
+        }
+        finalUrlForNpc = newAvatarUrlOrData;
+    } else if (newAvatarUrlOrData === '') { // Clearing avatar
+        finalUrlForNpc = ''; // Represent as empty string for clearing
+    } else { // Invalid format
+        showNotification("Định dạng avatar không hợp lệ cho NPC.", "error");
+        setIsUploadingAvatar(false);
+        return;
+    }
+
+    setKnowledgeBase(prevKb => {
+      const updatedNPCs = prevKb.discoveredNPCs.map(npc =>
+        npc.id === npcId ? { ...npc, avatarUrl: finalUrlForNpc === '' ? undefined : finalUrlForNpc } : npc
+      );
+      return { ...prevKb, discoveredNPCs: updatedNPCs };
+    });
+    const npcNameDisplay = npcData?.name || "NPC";
+    showNotification(finalUrlForNpc === '' ? `Đã xóa ảnh đại diện cho ${npcNameDisplay}.` : `${VIETNAMESE.avatarUploadSuccess} cho ${npcNameDisplay}.`, 'success');
+    setIsUploadingAvatar(false);
+  }, [knowledgeBase.discoveredNPCs, setKnowledgeBase, showNotification]);
 
 
   useEffect(() => { 
@@ -254,6 +377,7 @@ export const App: React.FC = () => {
         return;
       }
       const existingIdToUpdate = knowledgeBase.manualSaveId;
+      // Pass current in-memory knowledgeBase and gameMessages
       const newSaveId = await executeSaveGame(knowledgeBase, gameMessages, currentSaveName, existingIdToUpdate, false);
       if (newSaveId) { 
         setKnowledgeBase(prevKb => ({ ...prevKb, manualSaveId: newSaveId, manualSaveName: currentSaveName }));
@@ -281,29 +405,65 @@ export const App: React.FC = () => {
     setApiError(null); 
     setIsSummarizingOnLoad(false); 
     try {
-        let gameData: SaveGameData | null = null;
-        if (storageSettings.storageType === 'cloud') {
-            if (!firebaseUser) throw new Error(VIETNAMESE.signInRequiredForLoad);
-            gameData = await loadSpecificGameFromFirestore(firebaseUser.uid, saveId);
-        } else {
-            gameData = await loadSpecificGameFromIndexedDB(saveId);
-        }
+        const gameData = await loadSpecificGameFromIndexedDB(saveId);
 
         if (gameData) {
             let loadedKb = gameData.knowledgeBase;
 
+            // Reconstruct full snapshots for delta frames in turnHistory
             if (loadedKb.turnHistory && Array.isArray(loadedKb.turnHistory)) {
-                loadedKb.turnHistory = loadedKb.turnHistory.map(entry => {
-                    if (entry.knowledgeBaseSnapshot && entry.knowledgeBaseSnapshot.turnHistory) {
-                        const { turnHistory: nestedHistory, ...cleanedSnapshot } = entry.knowledgeBaseSnapshot;
-                        return {
+                let lastKeyframeKbSnapshot: KnowledgeBase | null = null;
+                let lastKeyframeMessagesSnapshot: GameMessage[] | null = null;
+                const reconstructedTurnHistory: TurnHistoryEntry[] = [];
+
+                for (const entry of loadedKb.turnHistory) {
+                    if (entry.type === 'keyframe') {
+                        // Keyframes from DB should have full snapshots
+                        lastKeyframeKbSnapshot = JSON.parse(JSON.stringify(entry.knowledgeBaseSnapshot));
+                        lastKeyframeMessagesSnapshot = JSON.parse(JSON.stringify(entry.gameMessagesSnapshot));
+                        reconstructedTurnHistory.push(entry);
+                    } else if (entry.type === 'delta') {
+                        if (!lastKeyframeKbSnapshot || !lastKeyframeMessagesSnapshot || !entry.knowledgeBaseDelta || !entry.gameMessagesDelta) {
+                            console.error('Cannot reconstruct delta frame, missing keyframe or delta data. Corrupted save?', entry);
+                            // Fallback: if a delta somehow has its own snapshot (should not happen from DB), use it. Otherwise, this entry is problematic.
+                            reconstructedTurnHistory.push(entry.knowledgeBaseSnapshot && entry.gameMessagesSnapshot ? entry : {...entry, knowledgeBaseSnapshot: {} as KnowledgeBase, gameMessagesSnapshot: []});
+                            continue;
+                        }
+                        
+                        let newKbSnapshotForDelta = lastKeyframeKbSnapshot;
+                        if (entry.knowledgeBaseDelta.length > 0) {
+                            newKbSnapshotForDelta = jsonpatch.applyPatch(
+                                JSON.parse(JSON.stringify(lastKeyframeKbSnapshot)), // Clone base
+                                entry.knowledgeBaseDelta
+                            ).newDocument as KnowledgeBase;
+                        }
+                        
+                        let newMessagesSnapshotForDelta = lastKeyframeMessagesSnapshot;
+                        if(entry.gameMessagesDelta.length > 0) {
+                            newMessagesSnapshotForDelta = jsonpatch.applyPatch(
+                                JSON.parse(JSON.stringify(lastKeyframeMessagesSnapshot)), // Clone base
+                                entry.gameMessagesDelta
+                            ).newDocument as GameMessage[];
+                        }
+
+                        const reconstructedEntry: TurnHistoryEntry = {
                             ...entry,
-                            knowledgeBaseSnapshot: cleanedSnapshot as KnowledgeBase 
+                            knowledgeBaseSnapshot: newKbSnapshotForDelta,
+                            gameMessagesSnapshot: newMessagesSnapshotForDelta,
                         };
+                        reconstructedTurnHistory.push(reconstructedEntry);
+                        
+                        // Update "last keyframe" to be the newly reconstructed state for the next delta
+                        lastKeyframeKbSnapshot = newKbSnapshotForDelta;
+                        lastKeyframeMessagesSnapshot = newMessagesSnapshotForDelta;
+                    } else {
+                        // Should not happen if type is only keyframe/delta. Push as is or handle error.
+                        reconstructedTurnHistory.push(entry); 
                     }
-                    return entry;
-                }).filter(Boolean); 
+                }
+                loadedKb.turnHistory = reconstructedTurnHistory;
             }
+
 
             setGameMessages(gameData.gameMessages); 
             
@@ -313,7 +473,7 @@ export const App: React.FC = () => {
                 ? loadedKb.autoSaveSlotIds 
                 : Array(MAX_AUTO_SAVE_SLOTS).fill(null);
             loadedKb.manualSaveName = gameData.name || loadedKb.manualSaveName || loadedKb.worldConfig?.saveGameName || "Không Tên";
-            loadedKb.manualSaveId = loadedKb.manualSaveId ?? (storageSettings.storageType === 'local' ? gameData.id : null) ?? null;
+            loadedKb.manualSaveId = loadedKb.manualSaveId ?? gameData.id ?? null;
             
             if (loadedKb.worldConfig && loadedKb.worldConfig.playerAvatarUrl) {
                 loadedKb.playerAvatarData = loadedKb.worldConfig.playerAvatarUrl; 
@@ -432,31 +592,20 @@ export const App: React.FC = () => {
   };
 
   const fetchSaveGamesForImportExport = async (): Promise<SaveGameMeta[]> => {
-    if (storageSettings.storageType === 'cloud') {
-      if (!firebaseUser) throw new Error(VIETNAMESE.signInRequiredForLoad);
-      return loadGamesFromFirestore(firebaseUser.uid);
-    } else {
-      return loadGamesFromIndexedDB();
-    }
+    return loadGamesFromIndexedDB();
   };
 
   const loadSpecificGameDataForExport = async (saveId: string): Promise<SaveGameData | null> => {
-    if (storageSettings.storageType === 'cloud') {
-      if (!firebaseUser) throw new Error(VIETNAMESE.signInRequiredForLoad);
-      return loadSpecificGameFromFirestore(firebaseUser.uid, saveId);
-    } else {
-      return loadSpecificGameFromIndexedDB(saveId);
-    }
+    // This will load the game data possibly with optimized turn history (deltas missing full snapshots)
+    // The reconstruction must happen in ImportExportScreen if exporting full JSON.
+    return loadSpecificGameFromIndexedDB(saveId);
   };
 
-  const handleImportGameData = async (gameDataToImport: Omit<SaveGameData, 'id' | 'timestamp'>) => {
+  const handleImportGameData = async (gameDataToImport: Omit<SaveGameData, 'id' | 'timestamp'> & { name: string}) => {
     try {
-      if (storageSettings.storageType === 'cloud') {
-        if (!firebaseUser) throw new Error(VIETNAMESE.signInRequiredForLoad);
-        await importGameToFirestore(firebaseUser.uid, gameDataToImport);
-      } else {
-        await importGameToIndexedDB(gameDataToImport);
-      }
+      // gameDataToImport might have full snapshots (from JSON) or optimized (from .sav.gz)
+      // importGameToIndexedDB and subsequently saveGameToIndexedDB will handle optimization.
+      await importGameToIndexedDB(gameDataToImport);
       showNotification(VIETNAMESE.dataImportedSuccess, 'success');
     } catch (e) {
       throw e; 
@@ -482,6 +631,8 @@ export const App: React.FC = () => {
             const lastHistoryEntry = currentTurnHistory.pop(); 
 
             if (lastHistoryEntry) {
+                // The snapshots in lastHistoryEntry are already complete due to reconstruction in handleLoadGame
+                // or direct storage in useGameActions.
                 const restoredKb = {
                     ...lastHistoryEntry.knowledgeBaseSnapshot,
                     turnHistory: currentTurnHistory 
@@ -678,23 +829,22 @@ export const App: React.FC = () => {
         case GameScreen.Initial:
           return <InitialScreen 
                     setCurrentScreen={setCurrentScreen} 
-                    firebaseUser={firebaseUser}
-                    onSignOut={async () => { await signOutUser(); setFirebaseUser(null); }}
-                    isFirebaseLoading={isInitialLoading && storageSettings.storageType === 'cloud'}
+                    onSignOut={() => { /* No-op as Firebase is removed */ }}
+                    isFirebaseLoading={false} // Firebase removed
                  />;
         case GameScreen.GameSetup:
           return <GameSetupScreen 
                     setCurrentScreen={setCurrentScreen} 
-                    onSetupComplete={(settings, uploadedAvatarBase64Data) => { 
+                    onSetupComplete={(settings, rawAvatarData) => { 
                         resetGameData(); 
-                        handleSetupCompleteAppWrapper(settings, uploadedAvatarBase64Data); 
+                        handleSetupCompleteAppWrapper(settings, rawAvatarData); 
                     }} 
                  />;
         case GameScreen.Gameplay:
           return <GameplayScreen
                     knowledgeBase={knowledgeBase}
                     gameMessages={gameMessages}
-                    isLoading={isLoadingApi || isSummarizingNextPageTransition || isSummarizingOnLoad || isAutoSaving}
+                    isLoading={isLoadingApi || isSummarizingNextPageTransition || isSummarizingOnLoad || isAutoSaving || isUploadingAvatar}
                     onPlayerAction={handlePlayerAction}
                     onQuit={() => {
                       resetGameData();
@@ -707,11 +857,10 @@ export const App: React.FC = () => {
                     summarizationResponsesLog={summarizationResponsesLog}
                     sentCraftingPromptsLog={sentCraftingPromptsLog} 
                     receivedCraftingResponsesLog={receivedCraftingResponsesLog}
-                    sentNpcAvatarPromptsLog={sentNpcAvatarPromptsLog} // Pass new log
-                    firebaseUser={firebaseUser}
+                    sentNpcAvatarPromptsLog={sentNpcAvatarPromptsLog} 
                     onSaveGame={handleSaveGame}
                     isSavingGame={isSavingGame}
-                    storageType={storageSettings.storageType}
+                    storageType="local" 
                     currentPageDisplay={currentPageDisplay}
                     setCurrentPageDisplay={setCurrentPageDisplay}
                     totalPages={totalPages}
@@ -734,6 +883,9 @@ export const App: React.FC = () => {
                     onSaveEditedMessage={handleSaveEditedMessage}
                     onCancelEditMessage={handleCancelEditMessage}
                     setCurrentScreen={setCurrentScreen}
+                    onUpdatePlayerAvatar={handleUpdatePlayerAvatarInKb} 
+                    onUpdateNpcAvatar={handleUpdateNpcAvatarInKb} 
+                    isUploadingAvatar={isUploadingAvatar} 
                  />;
         case GameScreen.Equipment: 
           return <EquipmentScreen
@@ -758,30 +910,23 @@ export const App: React.FC = () => {
         case GameScreen.LoadGameSelection:
             return <LoadGameScreen
                     setCurrentScreen={setCurrentScreen}
-                    firebaseUser={firebaseUser}
                     onLoadGame={handleLoadGame}
                     notify={showNotification}
-                    storageType={storageSettings.storageType}
+                    storageType="local" 
                    />;
         case GameScreen.StorageSettings:
             return <StorageSettingsScreen
                     setCurrentScreen={setCurrentScreen}
                     onSettingsSaved={(newSettings) => {
                         setStorageSettings(newSettings); 
-                        reInitializeFirebase(newSettings.storageType === 'cloud' ? newSettings.firebaseUserConfig : null)
-                            .then(() => {
-                                 showNotification(VIETNAMESE.storageSettingsSavedMessage + (newSettings.storageType === 'cloud' ? " Thay đổi Firebase có thể cần tải lại trang." : ""), 'success');
-                            })
-                            .catch(err => {
-                                showNotification(`Lỗi khi áp dụng cài đặt lưu trữ mới: ${err.message}`, 'error');
-                            });
+                        resetIndexedDBConnection(); 
+                        showNotification(VIETNAMESE.storageSettingsSavedMessage, 'success');
                     }}
                    />;
          case GameScreen.ImportExport:
             return <ImportExportScreen
                     setCurrentScreen={setCurrentScreen}
-                    storageType={storageSettings.storageType}
-                    firebaseUser={firebaseUser}
+                    storageType="local" 
                     notify={showNotification}
                     fetchSaveGames={fetchSaveGamesForImportExport}
                     loadSpecificGameData={loadSpecificGameDataForExport}

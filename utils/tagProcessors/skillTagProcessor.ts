@@ -39,7 +39,6 @@ export const processSkillLearned = (
                         ? skillTypeRaw 
                         : GameTemplates.SkillType.KHAC) as GameTemplates.SkillTypeValues;
     
-    // Robust check: case-insensitive and trimmed name comparison
     const existingSkillByName = newKb.playerSkills.find(s => s.name.trim().toLowerCase() === skillName.toLowerCase());
 
     if (!existingSkillByName) {
@@ -67,7 +66,7 @@ export const processSkillLearned = (
 
         const newSkill: Skill = {
             id: newSkillId,
-            name: skillName, // Store the trimmed name
+            name: skillName, 
             description: skillDescription,
             skillType: skillType,
             detailedEffect: skillEffect,
@@ -95,7 +94,7 @@ export const processSkillLearned = (
             timestamp: Date.now(), turnNumber: turnForSystemMessages
         });
     } else {
-        console.log(`SKILL_LEARNED: Skill with name "${skillName}" (case-insensitive, trimmed) already exists. ID: ${existingSkillByName.id}. Not adding duplicate.`);
+        console.warn(`SKILL_LEARNED: Skill "${skillName}" already exists. Not adding duplicate.`);
     }
     return { updatedKb: newKb, systemMessages };
 };
@@ -122,7 +121,6 @@ export const processSkillUpdate = (
         return { updatedKb: newKb, systemMessages };
     }
 
-    // Find skill by trimmed, case-insensitive name
     const skillIndex = newKb.playerSkills.findIndex(s => s.name.trim().toLowerCase() === currentSkillName.toLowerCase());
     
     if (skillIndex === -1) {
@@ -136,13 +134,12 @@ export const processSkillUpdate = (
     }
 
     const skillToUpdate = newKb.playerSkills[skillIndex];
-    const originalNameToDisplay = skillToUpdate.name; // Store original name for message before it's potentially changed
+    const originalNameToDisplay = skillToUpdate.name; 
     let updatedFieldsCount = 0;
 
     if (tagParams.newName) {
         const newTrimmedName = tagParams.newName.trim();
         if (newTrimmedName && newTrimmedName.toLowerCase() !== skillToUpdate.name.trim().toLowerCase()) {
-            // Check if the new name collides with another existing skill (excluding itself)
             const collisionExists = newKb.playerSkills.some((s, idx) => 
                 idx !== skillIndex && s.name.trim().toLowerCase() === newTrimmedName.toLowerCase()
             );
@@ -150,6 +147,7 @@ export const processSkillUpdate = (
                 skillToUpdate.name = newTrimmedName;
                 updatedFieldsCount++;
             } else {
+                 console.warn(`SKILL_UPDATE: New name "${newTrimmedName}" for skill "${originalNameToDisplay}" collides with an existing skill. Name not updated.`);
                  systemMessages.push({
                     id: `skill-update-error-namecollision-${Date.now()}`, type: 'system',
                     content: `[DEBUG] Lỗi cập nhật kỹ năng "${originalNameToDisplay}": Tên mới "${newTrimmedName}" đã tồn tại.`,
@@ -179,6 +177,8 @@ export const processSkillUpdate = (
             if (parsedValue !== undefined && !isNaN(parsedValue)) {
                 (skillToUpdate as any)[fieldName] = parsedValue;
                 updatedFieldsCount++;
+            } else {
+                console.warn(`SKILL_UPDATE: Invalid numeric value for ${paramKey as string}: "${tagParams[paramKey as string]}"`);
             }
         }
     };
@@ -205,7 +205,8 @@ export const processSkillUpdate = (
             content: `Kỹ năng "${originalNameToDisplay}" đã được cập nhật${skillToUpdate.name !== originalNameToDisplay ? ` thành "${skillToUpdate.name}"` : ""}.`,
             timestamp: Date.now(), turnNumber: turnForSystemMessages
         });
-    } else if (!systemMessages.some(msg => msg.id.includes('error'))) { // Only add no-change if no error already pushed
+    } else if (!systemMessages.some(msg => msg.id.includes('error'))) { 
+         console.warn(`SKILL_UPDATE: Tag for "${originalNameToDisplay}" received, but no valid fields were updated.`);
          systemMessages.push({
             id: `skill-update-nochange-${skillToUpdate.id}-${Date.now()}`, type: 'system',
             content: `[DEBUG] Tag SKILL_UPDATE cho "${originalNameToDisplay}" không có thay đổi nào được áp dụng.`,

@@ -33,6 +33,8 @@ export const processQuestAssigned = (
                 content: `Nhiệm vụ mới: ${questTitle}!`,
                 timestamp: Date.now(), turnNumber: turnForSystemMessages
             });
+        } else {
+            console.warn(`QUEST_ASSIGNED: Quest with title "${questTitle}" already exists. Not adding duplicate.`);
         }
     } else {
         console.warn("QUEST_ASSIGNED: Missing title, description, or objectives.", tagParams);
@@ -48,8 +50,8 @@ export const processQuestUpdated = (
     const newKb = JSON.parse(JSON.stringify(currentKb)) as KnowledgeBase;
     const systemMessages: GameMessage[] = [];
     const questTitle = tagParams.title;
-    const objectiveTextToUpdate = tagParams.objectiveText; // The original text of the objective to find
-    const newObjectiveText = tagParams.newObjectiveText; // Optional: new text for the objective
+    const objectiveTextToUpdate = tagParams.objectiveText; 
+    const newObjectiveText = tagParams.newObjectiveText; 
     const completed = tagParams.completed?.toLowerCase() === 'true';
 
     if (!questTitle || !objectiveTextToUpdate) {
@@ -74,7 +76,6 @@ export const processQuestUpdated = (
                 timestamp: Date.now(), turnNumber: turnForSystemMessages
             });
 
-            // Check if all objectives are completed
             const allObjectivesCompleted = quest.objectives.every(obj => obj.completed);
             if (allObjectivesCompleted) {
                 quest.status = 'completed';
@@ -109,7 +110,7 @@ export const processQuestCompleted = (
     const quest = newKb.allQuests.find(q => q.title === questTitle && q.status === 'active');
     if (quest) {
         quest.status = 'completed';
-        quest.objectives.forEach(obj => obj.completed = true); // Mark all objectives as completed
+        quest.objectives.forEach(obj => obj.completed = true); 
         systemMessages.push({
             id: 'quest-completed-' + Date.now(), type: 'system',
             content: `Nhiệm vụ "${questTitle}" đã hoàn thành!`,
@@ -149,14 +150,11 @@ export const processQuestFailed = (
 };
 
 
-export const processObjectiveUpdate = ( // Corrected export
+export const processObjectiveUpdate = ( 
     currentKb: KnowledgeBase,
     tagParams: Record<string, string>,
     turnForSystemMessages: number
 ): { updatedKb: KnowledgeBase; systemMessages: GameMessage[] } => {
-    // This function seems to be covered by processQuestUpdated.
-    // If it's meant to be distinct, its logic would go here.
-    // For now, let's alias it to processQuestUpdated to satisfy the import.
     console.warn("OBJECTIVE_UPDATE tag is being handled by processQuestUpdated. Consider consolidating tag usage if behavior is identical.");
     return processQuestUpdated(currentKb, tagParams, turnForSystemMessages);
 };

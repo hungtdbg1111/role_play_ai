@@ -18,6 +18,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     return {
       statusCode: 405,
       body: JSON.stringify({ message: "Method Not Allowed" }),
+       headers: { "Content-Type": "application/json" },
     };
   }
 
@@ -28,6 +29,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     return {
       statusCode: 500,
       body: JSON.stringify({ message: "Cloudinary server configuration error." }),
+      headers: { "Content-Type": "application/json" },
     };
   }
 
@@ -39,6 +41,7 @@ const handler: Handler = async (event: HandlerEvent) => {
       return {
         statusCode: 400,
         body: JSON.stringify({ message: "Invalid parameters: 'paramsToSign' object with at least 'timestamp' is required." }),
+        headers: { "Content-Type": "application/json" },
       };
     }
     
@@ -48,6 +51,7 @@ const handler: Handler = async (event: HandlerEvent) => {
             return {
                 statusCode: 400,
                 body: JSON.stringify({ message: `Invalid type for parameter '${key}'. Must be string or number.` }),
+                headers: { "Content-Type": "application/json" },
             };
         }
     }
@@ -60,7 +64,7 @@ const handler: Handler = async (event: HandlerEvent) => {
       body: JSON.stringify({
         signature: signature,
         timestamp: paramsToSign.timestamp, 
-        apiKey: CLOUDINARY_API_KEY, // Return the API key to be used by the client
+        apiKey: CLOUDINARY_API_KEY, 
       }),
     };
   } catch (error) {
@@ -69,6 +73,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     return {
       statusCode: 500,
       body: JSON.stringify({ message: "Failed to generate signature.", error: errorMessage }),
+      headers: { "Content-Type": "application/json" },
     };
   }
 };

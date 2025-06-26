@@ -1,6 +1,6 @@
 
-import { KnowledgeBase, PlayerActionInputType, ResponseLength, GameMessage, GenreType } from '../types';
-import { SUB_REALM_NAMES, VIETNAMESE, CUSTOM_GENRE_VALUE } from '../constants';
+import { KnowledgeBase, PlayerActionInputType, ResponseLength, GameMessage, GenreType, ViolenceLevel, StoryTone, NsfwDescriptionStyle, DIALOGUE_MARKER } from '../types';
+import { SUB_REALM_NAMES, VIETNAMESE, CUSTOM_GENRE_VALUE, DEFAULT_NSFW_DESCRIPTION_STYLE, DEFAULT_VIOLENCE_LEVEL, DEFAULT_STORY_TONE, NSFW_DESCRIPTION_STYLES } from '../constants';
 import * as GameTemplates from '../templates';
 
 export const generateContinuePrompt = (
@@ -17,6 +17,10 @@ export const generateContinuePrompt = (
   const customGenreName = worldConfig?.customGenreName;
   const isCultivationEnabled = worldConfig?.isCultivationEnabled !== undefined ? worldConfig.isCultivationEnabled : true;
   const effectiveGenre = (genre === CUSTOM_GENRE_VALUE && customGenreName) ? customGenreName : genre;
+  const nsfwMode = worldConfig?.nsfwMode || false;
+  const currentNsfwStyle = worldConfig?.nsfwDescriptionStyle || DEFAULT_NSFW_DESCRIPTION_STYLE;
+  const currentViolenceLevel = worldConfig?.violenceLevel || DEFAULT_VIOLENCE_LEVEL;
+  const currentStoryTone = worldConfig?.storyTone || DEFAULT_STORY_TONE;
 
 
   let genreSpecificIntro = `Bạn là một Đại Năng kể chuyện, chuyên sáng tác tiểu thuyết thể loại "${effectiveGenre}" bằng tiếng Việt.`;
@@ -60,6 +64,65 @@ export const generateContinuePrompt = (
       ...restOfWorldConfig
     } = knowledgeBase.worldConfig;
     worldConfigForPrompt = restOfWorldConfig;
+  }
+
+  let difficultyGuidanceText = ""; // Renamed
+  let currentDifficultyName = knowledgeBase.worldConfig?.difficulty || 'Thường';
+  switch (currentDifficultyName) {
+    case 'Dễ':
+      difficultyGuidanceText = VIETNAMESE.difficultyGuidanceEasy;
+      break;
+    case 'Thường':
+      difficultyGuidanceText = VIETNAMESE.difficultyGuidanceNormal;
+      break;
+    case 'Khó':
+      difficultyGuidanceText = VIETNAMESE.difficultyGuidanceHard;
+      break;
+    case 'Ác Mộng':
+      difficultyGuidanceText = VIETNAMESE.difficultyGuidanceNightmare;
+      break;
+    default:
+      difficultyGuidanceText = VIETNAMESE.difficultyGuidanceNormal;
+  }
+
+  let nsfwGuidanceCombined = "";
+  if (nsfwMode) {
+    let nsfwStyleGuidance = "";
+    switch (currentNsfwStyle) {
+      case 'Hoa Mỹ': nsfwStyleGuidance = VIETNAMESE.nsfwGuidanceHoaMy; break;
+      case 'Trần Tục': nsfwStyleGuidance = VIETNAMESE.nsfwGuidanceTranTuc; break;
+      case 'Gợi Cảm': nsfwStyleGuidance = VIETNAMESE.nsfwGuidanceGoiCam; break;
+      case 'Mạnh Bạo (BDSM)': nsfwStyleGuidance = VIETNAMESE.nsfwGuidanceManhBaoBDSM; break; // Added BDSM
+      default: nsfwStyleGuidance = VIETNAMESE.nsfwGuidanceHoaMy; 
+    }
+
+    let violenceGuidance = "";
+    switch (currentViolenceLevel) {
+        case 'Nhẹ Nhàng': violenceGuidance = VIETNAMESE.violenceLevelGuidanceNheNhang; break;
+        case 'Thực Tế': violenceGuidance = VIETNAMESE.violenceLevelGuidanceThucTe; break;
+        case 'Cực Đoan': violenceGuidance = VIETNAMESE.violenceLevelGuidanceCucDoan; break;
+        default: violenceGuidance = VIETNAMESE.violenceLevelGuidanceThucTe;
+    }
+
+    let toneGuidance = "";
+    switch (currentStoryTone) {
+        case 'Tích Cực': toneGuidance = VIETNAMESE.storyToneGuidanceTichCuc; break;
+        case 'Trung Tính': toneGuidance = VIETNAMESE.storyToneGuidanceTrungTinh; break;
+        case 'Đen Tối': toneGuidance = VIETNAMESE.storyToneGuidanceDenToi; break;
+        default: toneGuidance = VIETNAMESE.storyToneGuidanceTrungTinh;
+    }
+    nsfwGuidanceCombined = `
+**Hướng Dẫn Nội Dung Người Lớn (18+ ĐANG BẬT):**
+- **Phong Cách Miêu Tả Tình Dục:** ${currentNsfwStyle}.
+  ${nsfwStyleGuidance}
+- **Mức Độ Miêu Tả Bạo Lực:** ${currentViolenceLevel}.
+  ${violenceGuidance}
+- **Tông Màu Câu Chuyện:** ${currentStoryTone}.
+  ${toneGuidance}
+**LƯU Ý CHUNG KHI 18+ BẬT:** Hãy kết hợp các yếu tố trên để tạo ra trải nghiệm phù hợp. Ví dụ, một câu chuyện "Đen Tối" với bạo lực "Cực Đoan" và miêu tả "Mạnh Bạo (BDSM)" sẽ rất khác với một câu chuyện "Tích Cực" với bạo lực "Nhẹ Nhàng" và miêu tả "Hoa Mỹ", dù cả hai đều có thể có yếu tố 18+.`;
+
+  } else {
+    nsfwGuidanceCombined = "LƯU Ý QUAN TRỌNG: Chế độ Người Lớn đang TẮT. Tiếp tục duy trì nội dung phù hợp với mọi lứa tuổi, tập trung vào phiêu lưu và phát triển nhân vật. Tránh các chủ đề nhạy cảm, bạo lực quá mức hoặc tình dục.";
   }
 
 
@@ -111,6 +174,13 @@ ${knowledgeBase.worldConfig?.originalStorySummary
   **3. Nhiệm Vụ (JSON):**
     - Tất cả nhiệm vụ (kể cả đã hoàn thành/thất bại): ${JSON.stringify(knowledgeBase.allQuests)}
 
+**HƯỚNG DẪN VỀ ĐỘ KHÓ (Rất quan trọng để AI tuân theo):**
+- **Dễ:** ${VIETNAMESE.difficultyGuidanceEasy} Tỉ lệ thành công cho lựa chọn thường CAO (ví dụ: 70-95%). Rủi ro thấp, phần thưởng dễ đạt.
+- **Thường:** ${VIETNAMESE.difficultyGuidanceNormal} Tỉ lệ thành công cho lựa chọn TRUNG BÌNH (ví dụ: 50-80%). Rủi ro và phần thưởng cân bằng.
+- **Khó:** ${VIETNAMESE.difficultyGuidanceHard} Tỉ lệ thành công cho lựa chọn THẤP (ví dụ: 30-65%). Rủi ro cao, phần thưởng lớn nhưng khó kiếm.
+- **Ác Mộng:** ${VIETNAMESE.difficultyGuidanceNightmare} Tỉ lệ thành công cho lựa chọn CỰC KỲ THẤP (ví dụ: 15-50%). Rủi ro rất lớn, phần thưởng cực kỳ hiếm hoi.
+Hiện tại người chơi đang ở độ khó: **${currentDifficultyName}**. Hãy điều chỉnh tỉ lệ thành công, lợi ích và rủi ro trong các lựa chọn [CHOICE: "..."] của bạn cho phù hợp với hướng dẫn độ khó này.
+
 **TÓM TẮT CÁC DIỄN BIẾN TRANG TRƯỚC (NẾU CÓ):**
 ${previousPageSummaries.length > 0
     ? previousPageSummaries.map((summary, index) => {
@@ -133,17 +203,13 @@ ${currentPageMessagesLog || "Chưa có diễn biến nào trong trang này."}
 
 **HƯN DẪN XỬ LÝ DÀNH CHO AI:**
 ${inputType === 'action'
-    ? `Xử lý nội dung trên như một hành động mà nhân vật chính (${knowledgeBase.worldConfig?.playerName}) đang thực hiện. Mô tả kết quả của hành động này và các diễn biến tiếp theo một cách chi tiết và hấp dẫn, dựa trên TOÀN BỘ BỐI CẢNH.`
-    : `Nội dung trên là một gợi ý, mô tả, hoặc mong muốn của người chơi để định hướng hoặc làm phong phú thêm câu chuyện. Đây KHÔNG phải là hành động trực tiếp của nhân vật chính (${knowledgeBase.worldConfig?.playerName}). Hãy cố gắng lồng ghép yếu tố này vào câu chuyện một cách tự nhiên và hợp lý, dựa trên TOÀN BỘ BỐI CẢNH.`
+    ? `Xử lý nội dung trên như một hành động mà nhân vật chính (${knowledgeBase.worldConfig?.playerName}) đang thực hiện. Mô tả kết quả của hành động này và các diễn biến tiếp theo một cách chi tiết và hấp dẫn, dựa trên TOÀN BỘ BỐI CẢNH. Kết quả thành công hay thất bại PHẢI dựa trên Tỉ Lệ Thành Công bạn đã thiết lập cho lựa chọn đó (nếu là lựa chọn của AI) hoặc một tỉ lệ hợp lý do bạn quyết định (nếu là hành động tự do), có tính đến Độ Khó của game. Mô tả rõ ràng phần thưởng/lợi ích khi thành công hoặc tác hại/rủi ro khi thất bại.`
+    : `Nội dung trên là một gợi ý, mô tả, hoặc mong muốn của người chơi để định hướng hoặc làm phong phú thêm câu chuyện. Đây KHÔNG phải là hành động trực tiếp của nhân vật chính (${knowledgeBase.worldConfig?.playerName}). Hãy cố gắng lồng ghép yếu tố này vào câu chuyện một cách tự nhiên và hợp lý, dựa trên TOÀN BỘ BỐI CẢNH. Nếu gợi ý này dẫn đến một tình huống có thể có kết quả khác nhau, hãy xem xét việc đưa ra các lựa chọn [CHOICE: "..."] kèm theo tỉ lệ thành công/lợi ích/rủi ro.`
   }
 ${knowledgeBase.worldConfig?.originalStorySummary ? "**ĐẶC BIỆT LƯU Ý:** Vì đây là đồng nhân, hãy đảm bảo diễn biến câu chuyện và các lựa chọn bạn đưa ra tôn trọng và có thể dẫn dắt người chơi tương tác với các yếu tố từ 'TÓM TẮT CỐT TRUYỆN NGUYÊN TÁC' đã được cung cấp.**" : ""}
 
-**CHẾ ĐỘ NỘI DUNG (TỔNG THỂ GAME):**
-- Chế độ Người Lớn (18+): ${knowledgeBase.worldConfig?.nsfwMode ? "BẬT" : "TẮT"}
-${knowledgeBase.worldConfig?.nsfwMode
-    ? "LƯU Ý QUAN TRỌNG: Chế độ Người Lớn đã được BẬT. Ngươi ĐƯỢC PHÉP và ĐƯỢC KHUYẾN KHÍCH mô tả các cảnh 18+ với phong cách truyện 18+, các đại từ chỉ bộ phận sinh dục sẽ vẫn nói bình thường (Thay âm vật thành hột le, âm đạo thành lồn, dương vật thành cặc, những bộ phận khác thì nói như bình thường.) và cảnh quan hệ được nói trực diện một cách rất chi tiết, các cảnh máu me giết chóc cũng sẽ nói trực diện. Ưu tiên những cảnh tình dục hơn so với bạo lực"
-    : "LƯU Ý QUAN TRỌNG: Chế độ Người Lớn đang TẮT. Tiếp tục duy trì nội dung phù hợp với mọi lứa tuổi, tập trung vào phiêu lưu và phát triển nhân vật. Tránh các chủ đề nhạy cảm, bạo lực quá mức hoặc tình dục."
-  }
+**CHẾ ĐỘ NỘI DUNG VÀ PHONG CÁCH (NHẮC LẠI):**
+${nsfwGuidanceCombined}
 
 **ĐỘ DÀI PHẢN HỒI MONG MUỐN:**
 - Người chơi yêu cầu độ dài phản hồi: ${responseLength === 'short' ? 'Ngắn (khoảng 2-3 đoạn văn súc tích)' :
@@ -160,7 +226,7 @@ ${knowledgeBase.allQuests.filter(q => q.status === 'active' && q.objectives.some
       .filter(q => q.status === 'active' && q.objectives.some(obj => !obj.completed))
       .map(q => `${q.title} (Mục tiêu cần làm: ${q.objectives.filter(obj => !obj.completed).map(obj => obj.text).join('; ')})`)
       .join(". ")}
-  **QUAN TRỌNG:** Hãy ưu tiên tạo ra ít nhất 1-2 lựa chọn ([CHOICE: "..."]) trực tiếp giúp người chơi tiến triển hoặc hoàn thành một trong các mục tiêu chưa hoàn thành của các nhiệm vụ này. Các lựa chọn này nên rõ ràng cho người chơi biết chúng liên quan đến nhiệm vụ. Các lựa chọn khác có thể là khám phá chung hoặc tương tác khác.`
+  **QUAN TRỌNG:** Hãy ưu tiên tạo ra ít nhất 1-2 lựa chọn ([CHOICE: "..."]) trực tiếp giúp người chơi tiến triển hoặc hoàn thành một trong các mục tiêu chưa hoàn thành của các nhiệm vụ này. Các lựa chọn này nên rõ ràng cho người chơi biết chúng liên quan đến nhiệm vụ.`
     : "Hiện không có mục tiêu nhiệm vụ nào cần ưu tiên đặc biệt. Bạn có thể tự do phát triển câu chuyện."
   }
 ${knowledgeBase.worldConfig?.originalStorySummary ? "**LƯU Ý CHO ĐỒNG NHÂN:** Nếu có thể, hãy tạo ra các lựa chọn [CHOICE: \"...\"] liên quan đến việc khám phá hoặc tương tác với các yếu tố từ 'TÓM TẮT CỐT TRUYỆN NGUYÊN TÁC' đã được cung cấp.**" : ""}
@@ -171,6 +237,11 @@ ${knowledgeBase.playerStats.hieuUngBinhCanh ? `**LƯU Ý ĐẶC BIỆT: Nhân v�
 
 
 **QUY TẮC SỬ DỤNG TAGS (NHẮC LẠI VÀ BỔ SUNG):** 
+0.  **Đánh Dấu Hội Thoại/Âm Thanh (QUAN TRỌNG):** Khi nhân vật nói chuyện, rên rỉ khi làm tình, hoặc kêu la khi chiến đấu, hãy đặt toàn bộ câu nói/âm thanh đó vào giữa hai dấu ngoặc kép và dấu '${DIALOGUE_MARKER}', hãy cho nhân vật và npc nói chuyện ở múc độ vừa phải ở những cuộc hội thoại bình thường và chiến đấu nhưng khi quan hệ tình dục thì hãy chèn thêm nhiều câu rên rỉ và những lời tục tĩu tăng tình thú giữa các hành động.
+    *   Ví dụ lời nói: AI kể: Hắn nhìn cô và nói ${DIALOGUE_MARKER}Em có khỏe không?${DIALOGUE_MARKER}.
+    *   Ví dụ tiếng rên: AI kể: Cô ấy khẽ rên ${DIALOGUE_MARKER}Ah...~${DIALOGUE_MARKER} khi bị chạm vào.
+    *   Ví dụ tiếng hét chiến đấu: AI kể: Tiếng hét ${DIALOGUE_MARKER}Xung phong!${DIALOGUE_MARKER} vang vọng chiến trường.
+    *   Phần văn bản bên ngoài các cặp marker này vẫn là lời kể bình thường của bạn. Chỉ nội dung *bên trong* cặp marker mới được coi là lời nói/âm thanh trực tiếp.
 1.  **Tag \\\`[STATS_UPDATE: TênChỉSố=GiáTrịHoặcThayĐổi, ...]\`\\\`:** Dùng để cập nhật chỉ số của người chơi.
     *   **Tham số TênChỉSố:** \`sinhLuc\`, \`linhLuc\` (nếu có tu luyện), \`kinhNghiem\` (nếu có tu luyện/cấp độ), \`currency\`, \`isInCombat\`, \`turn\`. Tên chỉ số NÊN viết thường.
     *   **GiáTrịHoặcThayĐổi:**
@@ -290,9 +361,17 @@ ${knowledgeBase.playerStats.hieuUngBinhCanh ? `**LƯU Ý ĐẶC BIỆT: Nhân v�
 15. **Tag \\\`[REMOVE_BINH_CANH_EFFECT: kinhNghiemGain=X]\`\\\` (Chỉ khi \`isCultivationEnabled=true\`):** Dùng khi nhân vật có cơ duyên đột phá khỏi bình cảnh. \`X\` là lượng kinh nghiệm nhỏ (ví dụ 1 hoặc 10) được cộng thêm để vượt qua giới hạn cũ. Tag này sẽ tự động đặt \`hieuUngBinhCanh=false\`.
     *   **VÍ DỤ (Allowed):** \\\`[REMOVE_BINH_CANH_EFFECT: kinhNghiemGain=10]\`\\\`
 
-16. **Luôn cung cấp 3 đến 4 lựa chọn hành động mới.** Mỗi lựa chọn phải được trả về dưới dạng tag riêng biệt: \\\`[CHOICE: "Nội dung lựa chọn"]\\\`.
+16. **LỰA CHỌN HÀNH ĐỘNG MỚI (QUAN TRỌNG):**
+    *   Luôn cung cấp 3 đến 4 lựa chọn hành động mới.
+    *   **ĐỊNH DẠNG BẮT BUỘC CHO MỖI LỰA CHỌN:** \\\`[CHOICE: "Nội dung lựa chọn (Thành công: X% - Độ khó '${currentDifficultyName}', Lợi ích: Mô tả lợi ích khi thành công. Rủi ro: Mô tả rủi ro khi thất bại)"]\`\\\`.
+    *   \`X%\`: Tỉ lệ thành công ước tính. PHẢI phản ánh Độ Khó của game (xem hướng dẫn ở trên).
+    *   \`Lợi ích\`: Mô tả rõ ràng những gì người chơi có thể nhận được nếu hành động thành công (ví dụ: vật phẩm, kinh nghiệm, thông tin, thay đổi thiện cảm NPC, tiến triển nhiệm vụ).
+    *   \`Rủi ro\`: Mô tả rõ ràng những hậu quả tiêu cực nếu hành động thất bại (ví dụ: mất máu, bị phát hiện, nhiệm vụ thất bại, giảm thiện cảm).
+    *   **Ví dụ (Độ khó 'Thường'):** \\\`[CHOICE: "Thử thuyết phục lão nông (Thành công: 65% - Độ khó 'Thường', Lợi ích: Biết được lối vào bí mật, +10 thiện cảm. Rủi ro: Bị nghi ngờ, -5 thiện cảm, lão nông báo quan)"]\`\\\`
+    *   **Ví dụ (Độ khó 'Ác Mộng'):** \\\`[CHOICE: "Một mình đối đầu Hắc Long (Thành công: 20% - Độ khó 'Ác Mộng', Lợi ích: Nếu thắng, nhận danh hiệu 'Diệt Long Giả', vô số bảo vật. Rủi ro: Gần như chắc chắn tử vong, mất toàn bộ vật phẩm không khóa)"]\`\\\`
+
 17. **Tăng lượt chơi:** Kết thúc phản hồi bằng tag \\\`[STATS_UPDATE: turn=+1]\\\`. **KHÔNG được quên tag này.**
-18. **Duy trì tính logic và nhất quán của câu chuyện.**
+18. **Duy trì tính logic và nhất quán của câu chuyện.** **QUAN TRỌNG:** Diễn biến tiếp theo của bạn PHẢI phản ánh kết quả (thành công hay thất bại) của hành động người chơi đã chọn, dựa trên Tỉ Lệ Thành Công, Lợi Ích và Rủi Ro bạn vừa xác định cho lựa chọn đó. Đừng chỉ kể rằng người chơi đã chọn, hãy kể điều gì đã xảy ra.
 19. **Mô tả kết quả hành động một cách chi tiết và hấp dẫn.**
 20. **Trao Kinh Nghiệm (nếu có hệ thống):** Khi nhân vật hoàn thành hành động có ý nghĩa, sử dụng tag \\\`[STATS_UPDATE: kinhNghiem=+X%]\`\\\` hoặc \\\`[STATS_UPDATE: kinhNghiem=+X]\\\`\\\`.
 21. **RẤT QUAN TRỌNG** Khi không có nhiệm vu hiện tại thì hãy ưu tiên đưa ra cho người chơi thêm nhiệm vụ mới dựa vào câu chuyện hiện tại và mục tiêu, phương hướng của nhân vật chính.
@@ -301,6 +380,6 @@ ${isCultivationEnabled ? `23. **CẤM TUYỆT ĐỐI (NẾU CÓ TU LUYỆN):** K
 24. **CẤM TUYỆT ĐỐI:** Khi trả về một tag, dòng chứa tag đó KHÔNG ĐƯỢC chứa bất kỳ ký tự backslash ("\\") nào khác ngoài những ký tự cần thiết bên trong giá trị của tham số (ví dụ như trong chuỗi JSON của \`statBonusesJSON\`).
 25. **CẤM TUYỆT ĐỐI:** Không trả về "Hệ thống: câu lệnh hệ thống " mà bắt buộc sử dụng tag đã được quy định khi muốn thêm, thay đổi, xóa bất cứ thực thể hay hiệu ứng nào.
 
-**TIẾP TỤC CÂU CHUYỆN:** Dựa trên **HƯỚNG DẪN TỪ NGƯỜI CHƠI**, **ĐỘ DÀI PHẢN HỒI MONG MUỐN** và **TOÀN BỘ BỐI CẢNH GAME**, hãy tiếp tục câu chuyện cho thể loại "${effectiveGenre}". Mô tả kết quả, cập nhật trạng thái game bằng tags, và cung cấp các lựa chọn hành động mới.
+**TIẾP TỤC CÂU CHUYỆN:** Dựa trên **HƯỚNG DẪN TỪ NGƯỜI CHƠI**, **ĐỘ DÀI PHẢN HỒI MONG MUỐN** và **TOÀN BỘ BỐI CẢNH GAME**, hãy tiếp tục câu chuyện cho thể loại "${effectiveGenre}". Mô tả kết quả, cập nhật trạng thái game bằng tags, và cung cấp các lựa chọn hành động mới (theo định dạng đã hướng dẫn ở mục 16).
 `;
 };

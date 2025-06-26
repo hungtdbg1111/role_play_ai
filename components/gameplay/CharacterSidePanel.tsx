@@ -11,12 +11,16 @@ interface CharacterSidePanelProps {
   knowledgeBase: KnowledgeBase;
   onItemClick: (item: Item) => void;
   onSkillClick: (skill: Skill) => void;
+  onPlayerAvatarUploadRequest: (base64Data: string) => void; // New prop
+  isUploadingPlayerAvatar: boolean; // New prop
 }
 
 const CharacterSidePanel: React.FC<CharacterSidePanelProps> = ({
   knowledgeBase,
   onItemClick,
   onSkillClick,
+  onPlayerAvatarUploadRequest, // Destructure new prop
+  isUploadingPlayerAvatar, // Destructure new prop
 }) => {
   return (
     <div className="flex flex-col h-full"> 
@@ -28,9 +32,12 @@ const CharacterSidePanel: React.FC<CharacterSidePanelProps> = ({
           currencyName={knowledgeBase.worldConfig?.currencyName}
           playerName={knowledgeBase.worldConfig?.playerName}
           playerGender={knowledgeBase.worldConfig?.playerGender}
-          playerAvatarUrl={knowledgeBase.worldConfig?.playerAvatarUrl} // Pass player avatar URL
-          playerAvatarData={knowledgeBase.playerAvatarData} // Pass player avatar base64 data
-          worldConfig={knowledgeBase.worldConfig} // Pass worldConfig for isCultivationEnabled
+          playerAvatarUrl={knowledgeBase.worldConfig?.playerAvatarUrl} 
+          playerAvatarData={knowledgeBase.playerAvatarData} 
+          worldConfig={knowledgeBase.worldConfig} 
+          isPlayerContext={true} // Indicate this is for the player
+          onPlayerAvatarUploadRequest={onPlayerAvatarUploadRequest} // Pass the handler
+          isUploadingPlayerAvatar={isUploadingPlayerAvatar} // Pass loading state
         />
       )}
       <InventoryPanel items={knowledgeBase.inventory} onItemClick={onItemClick} />

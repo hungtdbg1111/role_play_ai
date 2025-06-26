@@ -1,5 +1,5 @@
 {
-  "name": "role-play-ai",
+  "name": "game-nhận-vai-1.2.5",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,13 +9,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@cloudinary/react": "^1.13.0",
-    "@cloudinary/url-gen": "^1.19.0",
-    "@google/genai": "^1.5.1",
-    "cloudinary": "^2.7.0",
-    "firebase": "^11.9.1",
     "react": "19.0.0",
-    "react-dom": "19.0.0"
+    "react-dom": "19.0.0",
+    "@google/genai": "^1.5.1",
+    "@cloudinary/url-gen": "^1.19.0",
+    "@cloudinary/react": "^1.13.0",
+    "crypto": "^1.0.1",
+    "fast-json-patch": "3.1.1",
+    "pako": "2.1.0",
+    "@netlify/functions": "^4.1.7"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

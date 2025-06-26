@@ -1,9 +1,13 @@
 
-import React, { useState } from 'react'; // Added useState
+import React, { useState, ChangeEvent, useRef } from 'react'; 
 import { PlayerStats, Item, EquipmentSlotId, KnowledgeBase, StatusEffect } from '../../../types';
 import { VIETNAMESE, FEMALE_AVATAR_BASE_URL, MAX_FEMALE_AVATAR_INDEX, MALE_AVATAR_PLACEHOLDER_URL } from '../../../constants';
 import * as GameTemplates from '../../../templates';
-import Modal from '../../ui/Modal'; // Import Modal component
+import Modal from '../../ui/Modal'; 
+import Button from '../../ui/Button'; 
+import InputField from '../../ui/InputField'; // Added InputField
+import Spinner from '../../ui/Spinner'; // Added Spinner
+import { isValidImageUrl } from '../../../utils/imageValidationUtils'; // Added image validation
 
 interface PlayerStatsWithEquipmentProps {
   playerStats: PlayerStats; 
@@ -12,9 +16,12 @@ interface PlayerStatsWithEquipmentProps {
   currencyName?: string;
   playerName?: string;
   playerGender?: string;
-  playerAvatarUrl?: string; // For random/external URL or "uploaded_via_file" marker
-  playerAvatarData?: string; // For base64 uploaded image
+  playerAvatarUrl?: string; 
+  playerAvatarData?: string; 
   worldConfig?: KnowledgeBase['worldConfig']; 
+  isPlayerContext?: boolean; 
+  onPlayerAvatarUploadRequest?: (base64DataOrUrl: string) => void; 
+  isUploadingPlayerAvatar?: boolean; 
 }
 
 const PlayerStatsWithEquipment: React.FC<PlayerStatsWithEquipmentProps> = ({
@@ -24,12 +31,22 @@ const PlayerStatsWithEquipment: React.FC<PlayerStatsWithEquipmentProps> = ({
   currencyName,
   playerName,
   playerGender,
-  playerAvatarUrl,
-  playerAvatarData,
+  playerAvatarUrl, 
+  playerAvatarData, 
   worldConfig,
+  isPlayerContext,
+  onPlayerAvatarUploadRequest,
+  isUploadingPlayerAvatar,
 }) => {
   const [selectedStatusEffect, setSelectedStatusEffect] = useState<StatusEffect | null>(null);
   const isCultivationEnabled = worldConfig?.isCultivationEnabled !== undefined ? worldConfig.isCultivationEnabled : true;
+  const playerAvatarFileInputRef = useRef<HTMLInputElement>(null);
+
+  // New state for player avatar URL input in gameplay
+  const [showPlayerAvatarUrlInput, setShowPlayerAvatarUrlInput] = useState(false);
+  const [playerAvatarUrlInputValue, setPlayerAvatarUrlInputValue] = useState('');
+  const [isPlayerAvatarUrlValidating, setIsPlayerAvatarUrlValidating] = useState(false);
+  const [playerAvatarUrlError, setPlayerAvatarUrlError] = useState<string | null>(null);
   
   const getBonusForStat = (statKey: keyof Omit<PlayerStats, 'realm' | 'currency' | 'isInCombat' | 'turn' | 'hieuUngBinhCanh' | 'sinhLuc' | 'linhLuc' | 'kinhNghiem' | 'activeStatusEffects' >): number => {
     let totalBonus = 0;
@@ -100,42 +117,148 @@ const PlayerStatsWithEquipment: React.FC<PlayerStatsWithEquipmentProps> = ({
         if (key === 'maxSinhLuc') statName = "Sinh Lực Tối Đa";
         else if (key === 'maxLinhLuc') statName = "Linh Lực Tối Đa";
         else if (key === 'sucTanCong') statName = "Sức Tấn Công";
-        // Add more translations if needed
         return `${statName}: ${value}`;
     }).join('; ');
   };
 
   const getPlayerAvatarSrc = () => {
-    if (playerAvatarData) {
-      return playerAvatarData; // This is base64 data URL
+    if (playerAvatarData && (playerAvatarData.startsWith('http://') || playerAvatarData.startsWith('https://') || playerAvatarData.startsWith('data:image'))) {
+      return playerAvatarData;
     }
-    if (playerAvatarUrl && playerAvatarUrl !== 'uploaded_via_file') {
-      return playerAvatarUrl; // This is a web URL
+    if (playerAvatarUrl && playerAvatarUrl !== 'uploaded_via_file' && (playerAvatarUrl.startsWith('http://') || playerAvatarUrl.startsWith('https://'))) {
+      return playerAvatarUrl;
     }
-    // Fallback placeholder based on gender
-    // If playerAvatarUrl is 'uploaded_via_file' but playerAvatarData is missing (e.g. error or not loaded yet),
-    // it will also fall back to placeholder. This should ideally be handled by ensuring data is present.
     const defaultFemaleAvatar = `${FEMALE_AVATAR_BASE_URL}${Math.floor(Math.random() * MAX_FEMALE_AVATAR_INDEX) + 1}.png`;
     return playerGender === 'Nữ' ? defaultFemaleAvatar : MALE_AVATAR_PLACEHOLDER_URL;
+  };
+
+  const handlePlayerAvatarFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file && onPlayerAvatarUploadRequest) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result as string;
+        onPlayerAvatarUploadRequest(base64String);
+        setShowPlayerAvatarUrlInput(false); 
+        setPlayerAvatarUrlInputValue('');
+        setPlayerAvatarUrlError(null);
+      };
+      reader.readAsDataURL(file);
+      if (playerAvatarFileInputRef.current) { 
+          playerAvatarFileInputRef.current.value = "";
+      }
+    }
+  };
+
+  const handlePlayerAvatarUrlSubmit = async () => {
+    if (!playerAvatarUrlInputValue.trim() || !onPlayerAvatarUploadRequest) return;
+    setIsPlayerAvatarUrlValidating(true);
+    setPlayerAvatarUrlError(null);
+    const isValid = await isValidImageUrl(playerAvatarUrlInputValue);
+    setIsPlayerAvatarUrlValidating(false);
+    if (isValid) {
+      onPlayerAvatarUploadRequest(playerAvatarUrlInputValue);
+      setShowPlayerAvatarUrlInput(false);
+      // setPlayerAvatarUrlInputValue(''); // Keep input value in case user wants to resubmit or copy
+    } else {
+      setPlayerAvatarUrlError(VIETNAMESE.avatarUrlInvalid);
+    }
   };
 
   return (
     <>
     <div className="bg-gray-800 p-3 sm:p-4 rounded-lg shadow-md border border-gray-700">
-      <div className="flex items-center mb-3 border-b border-gray-700 pb-2">
+      <div className="flex items-start mb-3 border-b border-gray-700 pb-2">
         <img 
             src={getPlayerAvatarSrc()} 
             alt={VIETNAMESE.playerAvatarLabel} 
             className="w-16 h-16 sm:w-20 sm:h-20 rounded-full object-cover border-2 border-indigo-500 shadow-md mr-3 sm:mr-4"
         />
-        <h3 className="text-lg font-semibold text-indigo-400 flex-grow">
-          <span>{VIETNAMESE.playerStatsSection}</span>
-          {isCultivationEnabled && playerStats.hieuUngBinhCanh && (
-            <span className="block text-xs font-bold text-red-400 bg-red-900/50 px-2 py-0.5 rounded-full border border-red-600 animate-pulse mt-1">
-              {VIETNAMESE.bottleneckEffectLabel}
-            </span>
-          )}
-        </h3>
+        <div className="flex-grow">
+            <h3 className="text-lg font-semibold text-indigo-400">
+            <span>{VIETNAMESE.playerStatsSection}</span>
+            {isCultivationEnabled && playerStats.hieuUngBinhCanh && (
+                <span className="block text-xs font-bold text-red-400 bg-red-900/50 px-2 py-0.5 rounded-full border border-red-600 animate-pulse mt-1">
+                {VIETNAMESE.bottleneckEffectLabel}
+                </span>
+            )}
+            </h3>
+            {isPlayerContext && (
+              <div className="mt-1 space-y-1">
+                <div className="flex flex-wrap gap-1">
+                    <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => playerAvatarFileInputRef.current?.click()}
+                        className="text-xs !py-1 !px-2 border-indigo-500 hover:bg-indigo-700/50 flex-grow sm:flex-grow-0"
+                        isLoading={isUploadingPlayerAvatar && !showPlayerAvatarUrlInput} // Only show loading on this if not URL inputting
+                        loadingText={VIETNAMESE.uploadingAvatarMessage}
+                        disabled={isUploadingPlayerAvatar}
+                        title={VIETNAMESE.uploadAvatarButtonLabel}
+                    >
+                     {VIETNAMESE.uploadAvatarButtonLabel}
+                    </Button>
+                    <input
+                        type="file"
+                        ref={playerAvatarFileInputRef}
+                        onChange={handlePlayerAvatarFileChange}
+                        accept="image/png, image/jpeg, image/webp, image/gif"
+                        className="hidden"
+                        id="player-avatar-upload-input"
+                        disabled={isUploadingPlayerAvatar}
+                    />
+                    <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                            setShowPlayerAvatarUrlInput(!showPlayerAvatarUrlInput);
+                            if (!showPlayerAvatarUrlInput) { // If opening, try to prefill from current avatar if it's a URL
+                                if (playerAvatarData && playerAvatarData.startsWith('http')) {
+                                    setPlayerAvatarUrlInputValue(playerAvatarData);
+                                } else if (playerAvatarUrl && playerAvatarUrl.startsWith('http')) {
+                                     setPlayerAvatarUrlInputValue(playerAvatarUrl);
+                                } else {
+                                    setPlayerAvatarUrlInputValue(''); // Clear if current is base64 or placeholder
+                                }
+                            }
+                            setPlayerAvatarUrlError(null);
+                        }}
+                        className="text-xs !py-1 !px-2 border-cyan-500 hover:bg-cyan-700/50 flex-grow sm:flex-grow-0"
+                        disabled={isUploadingPlayerAvatar}
+                        aria-expanded={showPlayerAvatarUrlInput}
+                        title={VIETNAMESE.avatarUrlInputLabel}
+                    >
+                        {showPlayerAvatarUrlInput ? "Đóng URL" : VIETNAMESE.avatarUrlInputLabel.replace(":", "")}
+                    </Button>
+                </div>
+                 {showPlayerAvatarUrlInput && (
+                    <div className="mt-1.5 p-2 border border-gray-700 rounded-md bg-gray-800/30">
+                        <InputField
+                            label="" 
+                            id="playerGameplayAvatarUrlInput"
+                            value={playerAvatarUrlInputValue}
+                            onChange={(e) => setPlayerAvatarUrlInputValue(e.target.value)}
+                            placeholder={VIETNAMESE.avatarUrlInputPlaceholder}
+                            disabled={isPlayerAvatarUrlValidating || isUploadingPlayerAvatar}
+                            className="!mb-1.5"
+                        />
+                        <Button
+                            size="sm"
+                            variant="primary"
+                            onClick={handlePlayerAvatarUrlSubmit}
+                            className="w-full text-xs !py-1"
+                            isLoading={isPlayerAvatarUrlValidating}
+                            disabled={isPlayerAvatarUrlValidating || isUploadingPlayerAvatar || !playerAvatarUrlInputValue.trim()}
+                            loadingText={VIETNAMESE.avatarUrlValidating}
+                        >
+                            {VIETNAMESE.confirmUrlButton}
+                        </Button>
+                        {playerAvatarUrlError && <p className="text-xs text-red-400 mt-1">{playerAvatarUrlError}</p>}
+                    </div>
+                )}
+              </div>
+            )}
+        </div>
       </div>
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-0.5">

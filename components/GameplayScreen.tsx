@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect, ChangeEvent, useCallback } from 'react';
-import { KnowledgeBase, GameMessage, AiChoice, PlayerStats, Item, Skill, Quest, NPC, GameLocation, WorldLoreEntry, Companion, QuestObjective, FirebaseUser, PlayerActionInputType, ResponseLength, StorageType, StyleSettings, StyleSettingProperty, Faction, GameScreen, StatusEffect } from './../types';
+import { KnowledgeBase, GameMessage, AiChoice, PlayerStats, Item, Skill, Quest, NPC, GameLocation, WorldLoreEntry, Companion, QuestObjective, PlayerActionInputType, ResponseLength, StorageType, StyleSettings, StyleSettingProperty, Faction, GameScreen, StatusEffect, DIALOGUE_MARKER } from './../types';
 import Button from './ui/Button'; // Ensured relative path
 import Spinner from './ui/Spinner';
 import Modal from './ui/Modal'; // Corrected import path
@@ -20,6 +20,10 @@ import DebugPanelDisplay from './gameplay/DebugPanelDisplay';
 import PaginationControls from './gameplay/PaginationControls';
 import { VIETNAMESE, DEFAULT_STYLE_SETTINGS, FEMALE_AVATAR_BASE_URL, MALE_AVATAR_PLACEHOLDER_URL, MAX_FEMALE_AVATAR_INDEX } from './../constants';
 import * as GameTemplates from './../templates';
+import { uploadImageToCloudinary } from '../services/cloudinaryService'; // Import Cloudinary service
+import { isValidImageUrl } from '../utils/imageValidationUtils';
+import InputField from './ui/InputField';
+
 
 // --- Define GameplayScreenProps interface ---
 interface GameplayScreenProps {
@@ -34,8 +38,7 @@ interface GameplayScreenProps {
   summarizationResponsesLog: string[];
   sentCraftingPromptsLog: string[]; 
   receivedCraftingResponsesLog: string[]; 
-  sentNpcAvatarPromptsLog: string[]; // New
-  firebaseUser: FirebaseUser | null;
+  sentNpcAvatarPromptsLog: string[]; 
   onSaveGame: () => Promise<void>;
   isSavingGame: boolean;
   storageType: StorageType;
@@ -58,6 +61,9 @@ interface GameplayScreenProps {
   onSaveEditedMessage: (messageId: string, newContent: string) => void;
   onCancelEditMessage: () => void;
   setCurrentScreen: (screen: GameScreen) => void;
+  onUpdatePlayerAvatar: (newAvatarUrl: string) => void; 
+  onUpdateNpcAvatar: (npcId: string, newAvatarUrl: string) => void; 
+  isUploadingAvatar: boolean; 
 }
 
 // --- Helper function to escape regex characters ---
@@ -78,8 +84,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
     summarizationResponsesLog,
     sentCraftingPromptsLog,
     receivedCraftingResponsesLog,
-    sentNpcAvatarPromptsLog, // Destructure new prop
-    firebaseUser,
+    sentNpcAvatarPromptsLog, 
     onSaveGame,
     isSavingGame,
     storageType,
@@ -102,6 +107,9 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
     onSaveEditedMessage,
     onCancelEditMessage,
     setCurrentScreen,
+    onUpdatePlayerAvatar,
+    onUpdateNpcAvatar,
+    isUploadingAvatar, 
 }) => {
   const [playerInput, setPlayerInput] = useState('');
 
@@ -132,6 +140,14 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
   const responseLengthDropdownRef = useRef<HTMLDivElement | null>(null);
 
   const [currentEditText, setCurrentEditText] = useState('');
+  const npcAvatarFileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingNpcSpecificAvatar, setIsUploadingNpcSpecificAvatar] = useState<string | null>(null); 
+
+  // State for NPC avatar URL input in modal
+  const [showNpcAvatarUrlInputModal, setShowNpcAvatarUrlInputModal] = useState(false); // New state
+  const [npcAvatarUrlInput, setNpcAvatarUrlInput] = useState('');
+  const [isNpcAvatarUrlValidating, setIsNpcAvatarUrlValidating] = useState(false);
+  const [npcAvatarUrlError, setNpcAvatarUrlError] = useState<string | null>(null);
 
 
   const [miniInfoPopover, setMiniInfoPopover] = useState<{
@@ -197,13 +213,16 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
   };
 
   const getLatestChoicesSource = useCallback(() => {
+    // Determine if the current page is a newly advanced, empty page (before AI response for it)
     const isPotentiallyNewEmptyPage = currentPageDisplay > 1 &&
-                                       isCurrentlyActivePage &&
+                                       isCurrentlyActivePage && // We are on the latest page
                                        !displayedMessages.some(m => m.type === 'narration' && m.choices && m.choices.length > 0);
 
     if (isPotentiallyNewEmptyPage) {
+        // If it's a new empty page, look for choices in the *overall* gameMessages history
         return [...gameMessages].reverse().find(msg => msg.type === 'narration' && msg.choices && msg.choices.length > 0);
     } else {
+        // Otherwise, use choices from the currently displayed messages on this page
         return [...displayedMessages].reverse().find(msg => msg.type === 'narration' && msg.choices && msg.choices.length > 0);
     }
   }, [gameMessages, displayedMessages, currentPageDisplay, isCurrentlyActivePage]);
@@ -220,6 +239,11 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
     setSelectedLoreId(null);
     setSelectedCompanionId(null);
     setSelectedFactionId(null);
+    // Reset NPC Avatar URL states when modal closes
+    setShowNpcAvatarUrlInputModal(false); // Hide input section
+    setNpcAvatarUrlInput('');
+    setIsNpcAvatarUrlValidating(false);
+    setNpcAvatarUrlError(null);
   };
 
   // Retrieve full entity objects from knowledgeBase using stored IDs for modals
@@ -232,6 +256,14 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
   const selectedCompanion = knowledgeBase.companions.find(c => c.id === selectedCompanionId);
   const selectedFaction = knowledgeBase.discoveredFactions.find(f => f.id === selectedFactionId);
 
+  useEffect(() => { // When NPC modal opens, prefill URL input if available
+    if (selectedNpc) {
+      setNpcAvatarUrlInput(selectedNpc.avatarUrl?.startsWith('http') ? selectedNpc.avatarUrl : '');
+      setShowNpcAvatarUrlInputModal(false); // Keep URL input hidden initially
+      setNpcAvatarUrlError(null);
+    }
+  }, [selectedNpc]);
+
 
   const handleKeywordClick = useCallback((
     event: React.MouseEvent<HTMLSpanElement>,
@@ -240,8 +272,10 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
   ) => {
     const target = event.currentTarget as HTMLElement;
     if (miniInfoPopover.isOpen && miniInfoPopover.entity === entity) {
+        // If clicking the same keyword that opened the popover, close it
         setMiniInfoPopover(prev => ({ ...prev, isOpen: false, targetRect: null }));
     } else {
+        // Otherwise, open/reposition the popover for the new keyword
         setMiniInfoPopover({
             isOpen: true,
             targetRect: target.getBoundingClientRect(),
@@ -249,7 +283,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
             entityType,
         });
     }
-  }, [miniInfoPopover.isOpen, miniInfoPopover.entity]);
+  }, [miniInfoPopover.isOpen, miniInfoPopover.entity]); // Dependencies for the popover
 
   const getKeywordHighlightStyle = useCallback((): React.CSSProperties => {
     const { textColor, fontFamily, fontSize, backgroundColor } = styleSettings.keywordHighlight;
@@ -261,97 +295,111 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
     return style;
   }, [styleSettings.keywordHighlight]);
 
+  const getDialogueHighlightStyle = useCallback((): React.CSSProperties => {
+    const { textColor, fontFamily, fontSize, backgroundColor } = styleSettings.dialogueHighlight;
+    const style: React.CSSProperties = {};
+    if (textColor) style.color = textColor;
+    if (fontFamily && fontFamily !== 'inherit') style.fontFamily = fontFamily; 
+    if (fontSize && fontSize !== 'inherit') style.fontSize = fontSize;       
+    if (backgroundColor && backgroundColor !== 'transparent') style.backgroundColor = backgroundColor; 
+    return style;
+  }, [styleSettings.dialogueHighlight]);
+
+
   const parseAndHighlightText = useCallback((textInput: string, kb: KnowledgeBase): React.ReactNode[] => {
-    const text = textInput ? String(textInput) : ""; 
-    if (!text) return [""]; 
+    const text = textInput ? String(textInput) : "";
+    if (!text) return [""];
 
-    const allKeywords: Array<{
-        name: string;
-        type: 'item' | 'skill' | 'quest' | 'npc' | 'location' | 'lore' | 'companion' | 'faction';
-        entity: any;
-    }> = [];
+    const finalNodes: React.ReactNode[] = [];
+    const dialogueHighlightStyle = getDialogueHighlightStyle();
+    const keywordHighlightStyle = getKeywordHighlightStyle();
 
-    const addKeywords = (source: any[], nameKey: string, type: any) => {
-        source.forEach(e => {
-            const name = e[nameKey];
-            if (typeof name === 'string' && name.trim().length > 2) {
-                allKeywords.push({ name: name.trim(), type, entity: e });
+    const segments = text.split(DIALOGUE_MARKER);
+
+    segments.forEach((segment, index) => {
+      if (index % 2 === 1) { // Dialogue content (between markers)
+        if (segment.length > 0) { // Non-empty dialogue
+          finalNodes.push(
+            <span key={`dialogue-${finalNodes.length}`} style={dialogueHighlightStyle}>
+              {DIALOGUE_MARKER + segment + DIALOGUE_MARKER}
+            </span>
+          );
+        } 
+        // If segment.length is 0 here, it means we had adjacent markers like "", which should be removed (by adding nothing).
+      } else { // Regular text (even index)
+        if (segment.length > 0) {
+          const allKeywords: Array<{ name: string; type: 'item' | 'skill' | 'quest' | 'npc' | 'location' | 'lore' | 'companion' | 'faction'; entity: any;}> = [];
+          kb.inventory.forEach(e => { if (typeof e.name === 'string' && e.name.trim().length > 2) allKeywords.push({ name: e.name.trim(), type: 'item', entity: e }); });
+          kb.playerSkills.forEach(e => { if (typeof e.name === 'string' && e.name.trim().length > 2) allKeywords.push({ name: e.name.trim(), type: 'skill', entity: e }); });
+          kb.allQuests.filter(q => q.status === 'active').forEach(e => { if (typeof e.title === 'string' && e.title.trim().length > 2) allKeywords.push({ name: e.title.trim(), type: 'quest', entity: e }); });
+          kb.discoveredNPCs.forEach(e => { if (typeof e.name === 'string' && e.name.trim().length > 2) allKeywords.push({ name: e.name.trim(), type: 'npc', entity: e }); });
+          kb.discoveredLocations.forEach(e => { if (typeof e.name === 'string' && e.name.trim().length > 2) allKeywords.push({ name: e.name.trim(), type: 'location', entity: e }); });
+          kb.worldLore.forEach(e => { if (typeof e.title === 'string' && e.title.trim().length > 2) allKeywords.push({ name: e.title.trim(), type: 'lore', entity: e }); });
+          kb.companions.forEach(e => { if (typeof e.name === 'string' && e.name.trim().length > 2) allKeywords.push({ name: e.name.trim(), type: 'companion', entity: e }); });
+          kb.discoveredFactions.forEach(e => { if (typeof e.name === 'string' && e.name.trim().length > 2) allKeywords.push({ name: e.name.trim(), type: 'faction', entity: e }); });
+
+          if (allKeywords.length === 0) {
+            finalNodes.push(segment);
+          } else {
+            allKeywords.sort((a, b) => b.name.length - a.name.length);
+            const keywordMap = new Map<string, { type: any, entity: any }>();
+            allKeywords.forEach(kw => { if (!keywordMap.has(kw.name.toLowerCase())) keywordMap.set(kw.name.toLowerCase(), { type: kw.type, entity: kw.entity }); });
+            const uniqueNamesForRegex = Array.from(new Set(allKeywords.map(kw => escapeRegExp(kw.name))));
+
+            if (uniqueNamesForRegex.length === 0) {
+                finalNodes.push(segment);
+            } else {
+                const pattern = `\\b(${uniqueNamesForRegex.join('|')})\\b`;
+                const regex = new RegExp(pattern, 'gi');
+                
+                let lastKeywordIndexInSegment = 0;
+                let matchInSegment;
+                while ((matchInSegment = regex.exec(segment)) !== null) {
+                  const keywordText = matchInSegment[0];
+                  const keywordInfo = keywordMap.get(keywordText.toLowerCase());
+
+                  if (matchInSegment.index > lastKeywordIndexInSegment) {
+                    finalNodes.push(segment.substring(lastKeywordIndexInSegment, matchInSegment.index));
+                  }
+
+                  if (keywordInfo) {
+                    finalNodes.push(
+                      <KeywordSpan
+                        key={`keyword-${keywordInfo.type}-${(keywordInfo.entity as any).id || keywordInfo.entity.name || keywordInfo.entity.title}-${finalNodes.length}`}
+                        keyword={keywordText}
+                        entityType={keywordInfo.type}
+                        entity={keywordInfo.entity}
+                        onClick={handleKeywordClick}
+                        style={keywordHighlightStyle}
+                      />
+                    );
+                  } else {
+                    finalNodes.push(keywordText); 
+                  }
+                  lastKeywordIndexInSegment = regex.lastIndex;
+                }
+                if (lastKeywordIndexInSegment < segment.length) {
+                  finalNodes.push(segment.substring(lastKeywordIndexInSegment));
+                }
             }
-        });
-    };
-
-    addKeywords(kb.inventory, 'name', 'item');
-    addKeywords(kb.playerSkills, 'name', 'skill');
-    addKeywords(kb.allQuests.filter(q => q.status === 'active'), 'title', 'quest');
-    addKeywords(kb.discoveredNPCs, 'name', 'npc');
-    addKeywords(kb.discoveredLocations, 'name', 'location');
-    addKeywords(kb.worldLore, 'title', 'lore');
-    addKeywords(kb.companions, 'name', 'companion');
-    addKeywords(kb.discoveredFactions, 'name', 'faction');
-
-
-    if (allKeywords.length === 0) return [text];
-
-    allKeywords.sort((a, b) => b.name.length - a.name.length);
-
-    const keywordMap = new Map<string, { type: any, entity: any }>();
-    allKeywords.forEach(kw => {
-      if (!keywordMap.has(kw.name.toLowerCase())) {
-          keywordMap.set(kw.name.toLowerCase(), { type: kw.type, entity: kw.entity });
+          }
+        }
       }
     });
+    return finalNodes.length > 0 ? finalNodes : [""];
+  }, [handleKeywordClick, getKeywordHighlightStyle, getDialogueHighlightStyle, DIALOGUE_MARKER, knowledgeBase]);
 
-    const uniqueNamesForRegex = Array.from(new Set(allKeywords.map(kw => escapeRegExp(kw.name))));
-    if (uniqueNamesForRegex.length === 0) return [text];
-
-    const pattern = `\\b(${uniqueNamesForRegex.join('|')})\\b`;
-    const regex = new RegExp(pattern, 'gi');
-
-    const resultNodes: React.ReactNode[] = [];
-    let lastIndex = 0;
-    let match;
-    const highlightStyle = getKeywordHighlightStyle();
-
-    while ((match = regex.exec(text)) !== null) {
-        const keywordText = match[0];
-        const keywordInfo = keywordMap.get(keywordText.toLowerCase());
-
-        if (match.index > lastIndex) {
-            resultNodes.push(text.substring(lastIndex, match.index)); 
-        }
-
-        if (keywordInfo) {
-            resultNodes.push(
-                <KeywordSpan
-                    key={`${keywordInfo.type}-${(keywordInfo.entity as any).id || keywordInfo.entity.name || keywordInfo.entity.title}-${match.index}`}
-                    keyword={keywordText}
-                    entityType={keywordInfo.type}
-                    entity={keywordInfo.entity}
-                    onClick={handleKeywordClick}
-                    style={highlightStyle}
-                />
-            );
-        } else {
-            resultNodes.push(keywordText);
-        }
-        lastIndex = regex.lastIndex;
-    }
-
-    if (lastIndex < text.length) {
-        resultNodes.push(text.substring(lastIndex));
-    }
-
-    return resultNodes.length > 0 ? resultNodes : [text];
-  }, [handleKeywordClick, getKeywordHighlightStyle]);
 
   const isSaveDisabled =
-    (storageType === 'cloud' && !firebaseUser) ||
     isSavingGame ||
     isLoading ||
-    isSummarizing;
+    isSummarizing ||
+    isUploadingAvatar; 
 
+  // Determine if the stop button should be disabled.
+  // It can be used if not summarizing AND ( (isLoading from API and there's history) OR (not loading and there's history beyond initial setup) )
   const canRollbackStandard = knowledgeBase.turnHistory && knowledgeBase.turnHistory.length > 0 && !(knowledgeBase.playerStats.turn === 1 && knowledgeBase.turnHistory.length ===1 && knowledgeBase.turnHistory[0].knowledgeBaseSnapshot.playerStats.turn === 0);
-  const isStopButtonDisabled = isSummarizing || (!isLoading && !canRollbackStandard);
+  const isStopButtonDisabled = isSummarizing || (!isLoading && !canRollbackStandard) || isUploadingAvatar;
 
   const getDynamicMessageStyles = (msgType: GameMessage['type']): React.CSSProperties => {
     const styles: React.CSSProperties = {};
@@ -364,6 +412,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
       if (setting.fontFamily && setting.fontFamily !== 'inherit') styles.fontFamily = setting.fontFamily;
       if (setting.fontSize && setting.fontSize !== 'inherit') styles.fontSize = setting.fontSize;
       if (setting.textColor) styles.color = setting.textColor; 
+      // Ensure background color is applied only if it's not 'transparent' or undefined
       if (setting.backgroundColor && setting.backgroundColor !== 'transparent') styles.backgroundColor = setting.backgroundColor;
     }
     return styles;
@@ -379,6 +428,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
       if (setting.backgroundColor && setting.backgroundColor !== 'transparent') {
         styles.backgroundColor = setting.backgroundColor;
       } else if (setting.backgroundColor === 'transparent') {
+        // Explicitly set transparent if that's the value, otherwise default browser/Tailwind style applies
         styles.backgroundColor = 'transparent';
       }
     }
@@ -390,13 +440,16 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
     onSaveEditedMessage(messageId, currentEditText);
   };
 
+  // Use the manualSaveName or worldConfig.saveGameName or worldConfig.theme for display
   const gameTitleDisplay = knowledgeBase.manualSaveName || knowledgeBase.worldConfig?.saveGameName || knowledgeBase.worldConfig?.theme || "Role Play AI";
 
+  // Helper to render stat bonuses in the modal
   const renderStatBonuses = (bonuses: Partial<PlayerStats>) => {
+    // Filter out base stats and non-numeric/zero values for display
     const relevantBonuses = Object.entries(bonuses).filter(
-        (entry): entry is [string, number] => { 
+        (entry): entry is [string, number] => { // Type assertion
             const [key, value] = entry;
-            return !key.startsWith('base') &&
+            return !key.startsWith('base') && // Exclude baseMaxSinhLuc, etc.
                 typeof value === 'number' &&
                 value !== 0;
         }
@@ -409,6 +462,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
         linhLuc: "Linh Lực Hiện Tại", maxLinhLuc: "Linh Lực Tối Đa",
         sucTanCong: "Sức Tấn Công",
         kinhNghiem: "Kinh Nghiệm", maxKinhNghiem: "Kinh Nghiệm Tối Đa",
+        // Add more translations as needed
     };
 
     return (
@@ -427,17 +481,58 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
   
   const getSelectedNpcAvatarSrc = () => {
     if (selectedNpc) {
-      if (selectedNpc.avatarUrl && (selectedNpc.avatarUrl.startsWith('http://') || selectedNpc.avatarUrl.startsWith('https://'))) {
-        return selectedNpc.avatarUrl; // Use stored Cloudinary/web URL
+      if (selectedNpc.avatarUrl && (selectedNpc.avatarUrl.startsWith('http://') || selectedNpc.avatarUrl.startsWith('https://') || selectedNpc.avatarUrl.startsWith('data:image'))) {
+        return selectedNpc.avatarUrl; // Use stored Cloudinary/web URL or base64
       }
       // Fallback to random/placeholder if no valid URL
       if (selectedNpc.gender === 'Nữ') {
         const randomIndex = Math.floor(Math.random() * MAX_FEMALE_AVATAR_INDEX) + 1;
         return `${FEMALE_AVATAR_BASE_URL}${randomIndex}.png`;
       }
-      return MALE_AVATAR_PLACEHOLDER_URL;
+      return MALE_AVATAR_PLACEHOLDER_URL; // Default for Male or Không rõ
     }
-    return MALE_AVATAR_PLACEHOLDER_URL; // Fallback if selectedNpc is null
+    return MALE_AVATAR_PLACEHOLDER_URL; // Default if no NPC selected
+  };
+
+  // Handle NPC avatar file input change
+  const handleNpcAvatarFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file && selectedNpc) {
+        setIsUploadingNpcSpecificAvatar(selectedNpc.id);
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+            const base64String = reader.result as string;
+            onUpdateNpcAvatar(selectedNpc.id, base64String);
+            setIsUploadingNpcSpecificAvatar(null); 
+            if (npcAvatarFileInputRef.current) npcAvatarFileInputRef.current.value = "";
+            setShowNpcAvatarUrlInputModal(false); // Hide URL input on file upload
+        };
+        reader.readAsDataURL(file);
+    }
+  };
+
+  // Handle player avatar upload (passed from CharacterSidePanel)
+  const handlePlayerAvatarUploadRequest = async (base64Data: string) => {
+    onUpdatePlayerAvatar(base64Data);
+  };
+  
+  const handleNpcAvatarUrlInputChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setNpcAvatarUrlInput(e.target.value);
+    setNpcAvatarUrlError(null);
+  };
+
+  const handleNpcAvatarUrlSubmit = async () => {
+    if (!selectedNpc || !npcAvatarUrlInput.trim()) return;
+    setIsNpcAvatarUrlValidating(true);
+    setNpcAvatarUrlError(null);
+    const isValid = await isValidImageUrl(npcAvatarUrlInput);
+    setIsNpcAvatarUrlValidating(false);
+    if (isValid) {
+      onUpdateNpcAvatar(selectedNpc.id, npcAvatarUrlInput);
+      setShowNpcAvatarUrlInputModal(false); // Hide on successful URL submit
+    } else {
+      setNpcAvatarUrlError(VIETNAMESE.avatarUrlInvalid);
+    }
   };
 
 
@@ -454,7 +549,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
         setCurrentScreen={setCurrentScreen}
         onRollbackTurn={onRollbackTurn}
         isStopButtonDisabled={isStopButtonDisabled}
-        isLoading={isLoading}
+        isLoading={isLoading || isUploadingAvatar}
         onSaveGame={onSaveGame}
         isSaveDisabled={isSaveDisabled}
         isSavingGame={isSavingGame}
@@ -466,10 +561,11 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
       />
 
       <div className="flex-grow flex flex-col gap-4 overflow-hidden">
+        {/* Main content area: Story Log and Player Input */}
         <div className="flex-grow flex flex-col bg-gray-850 shadow-xl rounded-lg overflow-hidden">
           <StoryLog
             displayedMessages={displayedMessages}
-            isLoadingUi={isLoading}
+            isLoadingUi={isLoading || isUploadingAvatar} // Combine loading states for UI
             isSummarizingUi={isSummarizing}
             isCurrentlyActivePage={isCurrentlyActivePage}
             knowledgeBase={knowledgeBase}
@@ -479,7 +575,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
             setCurrentEditText={setCurrentEditText}
             onStartEditMessage={onStartEditMessage} 
             onSaveEditedMessage={handleSaveEditInternal} 
-            onCancelEditMessage={onCancelEditMessage} 
+            onCancelEditMessage={onCancelEditMessage} // Corrected prop name
             parseAndHighlightText={parseAndHighlightText}
             getDynamicMessageStyles={getDynamicMessageStyles}
             playerStatsTurn={knowledgeBase.playerStats.turn}
@@ -500,7 +596,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
             isResponseLengthDropdownOpen={isResponseLengthDropdownOpen}
             setIsResponseLengthDropdownOpen={setIsResponseLengthDropdownOpen}
             responseLengthDropdownRef={responseLengthDropdownRef}
-            isLoadingUi={isLoading}
+            isLoadingUi={isLoading || isUploadingAvatar}
             isSummarizingUi={isSummarizing}
             isCurrentlyActivePage={isCurrentlyActivePage}
             messageIdBeingEdited={messageIdBeingEdited}
@@ -514,16 +610,19 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
             onPrev={onGoToPrevPage}
             onNext={onGoToNextPage}
             onJump={onJumpToPage}
-            isSummarizing={isSummarizing}
+            isSummarizing={isSummarizing || isUploadingAvatar}
           />
         </div>
       </div>
 
+      {/* Off-Canvas Panels */}
       <OffCanvasPanel isOpen={isCharPanelOpen} onClose={() => setIsCharPanelOpen(false)} title={VIETNAMESE.characterPanelTitle} position="right">
           <CharacterSidePanel
             knowledgeBase={knowledgeBase}
             onItemClick={(item) => { setSelectedItemId(item.id); }}
             onSkillClick={(skill) => { setSelectedSkillId(skill.id); }}
+            onPlayerAvatarUploadRequest={handlePlayerAvatarUploadRequest}
+            isUploadingPlayerAvatar={isUploadingNpcSpecificAvatar === 'player' || isUploadingAvatar}
           />
       </OffCanvasPanel>
       <OffCanvasPanel isOpen={isQuestsPanelOpen} onClose={() => setIsQuestsPanelOpen(false)} title={VIETNAMESE.questsPanelTitle} position="right">
@@ -543,6 +642,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
           />
       </OffCanvasPanel>
 
+      {/* Modal for Entity Details */}
       <Modal
         isOpen={!!selectedItem || !!selectedSkill || !!selectedQuest || !!selectedNpc || !!selectedLocation || !!selectedLore || !!selectedCompanion || !!selectedFaction}
         onClose={closeModal}
@@ -559,6 +659,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
         }
       >
         <div className="space-y-2 text-sm">
+            {/* ... (Content for Item, Skill, Quest, Location, Lore, Companion, Faction as before) ... */}
             {selectedItem && (
               <>
                 <p><strong className="text-indigo-300">Tên:</strong> {selectedItem.name}</p>
@@ -654,6 +755,71 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
                     alt={selectedNpc.name}
                     className="w-24 h-24 sm:w-32 sm:h-32 rounded-lg object-cover mx-auto mb-3 border-2 border-indigo-400 shadow-md"
                 />
+                <div className="space-y-2">
+                    <div className="flex flex-wrap gap-1">
+                        <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => npcAvatarFileInputRef.current?.click()}
+                            className="text-xs !py-1.5 border-purple-500 hover:bg-purple-700/60 flex-grow sm:flex-grow-0"
+                            isLoading={isUploadingNpcSpecificAvatar === selectedNpc.id && !showNpcAvatarUrlInputModal}
+                            loadingText={VIETNAMESE.uploadingAvatarMessage}
+                            disabled={isUploadingNpcSpecificAvatar === selectedNpc.id}
+                        >
+                            {VIETNAMESE.uploadNpcAvatarLabel}
+                        </Button>
+                        <input
+                            type="file"
+                            ref={npcAvatarFileInputRef}
+                            onChange={(e) => handleNpcAvatarFileChange(e as ChangeEvent<HTMLInputElement>)}
+                            accept="image/png, image/jpeg, image/webp, image/gif"
+                            className="hidden"
+                            id={`npc-avatar-upload-input-${selectedNpc.id}`}
+                            disabled={isUploadingNpcSpecificAvatar === selectedNpc.id}
+                        />
+                        <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => {
+                                setShowNpcAvatarUrlInputModal(!showNpcAvatarUrlInputModal);
+                                if (!showNpcAvatarUrlInputModal) { // If opening
+                                    setNpcAvatarUrlInput(selectedNpc.avatarUrl?.startsWith('http') ? selectedNpc.avatarUrl : '');
+                                }
+                                setNpcAvatarUrlError(null);
+                            }}
+                            className="text-xs !py-1.5 border-cyan-500 hover:bg-cyan-700/60 flex-grow sm:flex-grow-0"
+                            aria-expanded={showNpcAvatarUrlInputModal}
+                        >
+                           {showNpcAvatarUrlInputModal ? "Đóng URL" : VIETNAMESE.avatarUrlInputLabel.replace(":", "")}
+                        </Button>
+                    </div>
+                    {showNpcAvatarUrlInputModal && (
+                        <div className="mt-1.5 p-2 border border-gray-700 rounded-md bg-gray-800/30">
+                            <InputField
+                                label=""
+                                id={`npc-avatar-url-modal-${selectedNpc.id}`}
+                                value={npcAvatarUrlInput}
+                                onChange={(e) => handleNpcAvatarUrlInputChange(e as ChangeEvent<HTMLInputElement>)}
+                                placeholder={VIETNAMESE.avatarUrlInputPlaceholder}
+                                disabled={isUploadingNpcSpecificAvatar === selectedNpc.id || isNpcAvatarUrlValidating}
+                                className="!mb-1.5"
+                            />
+                             <Button
+                                size="sm"
+                                variant="primary"
+                                onClick={handleNpcAvatarUrlSubmit}
+                                className="w-full text-xs !py-1"
+                                isLoading={isNpcAvatarUrlValidating}
+                                disabled={isUploadingNpcSpecificAvatar === selectedNpc.id || isNpcAvatarUrlValidating || !npcAvatarUrlInput.trim()}
+                                loadingText={VIETNAMESE.avatarUrlValidating}
+                            >
+                                {VIETNAMESE.confirmUrlButton}
+                            </Button>
+                            {isNpcAvatarUrlValidating && <Spinner size="sm" text={VIETNAMESE.avatarUrlValidating} className="mt-1 text-xs" />}
+                            {npcAvatarUrlError && <p className="text-xs text-red-400 mt-1">{npcAvatarUrlError}</p>}
+                        </div>
+                    )}
+                </div>
                 <p><strong className="text-indigo-300">Tên:</strong> {selectedNpc.name} {selectedNpc.title ? `(${selectedNpc.title})` : ''}</p>
                 {selectedNpc.gender && <p><strong className="text-indigo-300">Giới tính:</strong> {selectedNpc.gender}</p>}
                 <p><strong className="text-indigo-300">Cảnh giới:</strong> {selectedNpc.realm || "Không rõ"}</p>
@@ -713,8 +879,11 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({
         </div>
       </Modal>
 
+      {/* MiniInfoPopover for keyword hover details */}
       <MiniInfoPopover isOpen={miniInfoPopover.isOpen} targetRect={miniInfoPopover.targetRect} entity={miniInfoPopover.entity} entityType={miniInfoPopover.entityType} onClose={() => setMiniInfoPopover(prev => ({ ...prev, isOpen: false }))} knowledgeBase={knowledgeBase} />
+      {/* Debug Panel (conditionally rendered) */}
       {showDebugPanel && <DebugPanelDisplay kb={knowledgeBase} sentPromptsLog={sentPromptsLog} rawAiResponsesLog={rawAiResponsesLog} latestPromptTokenCount={latestPromptTokenCount} summarizationResponsesLog={summarizationResponsesLog} sentCraftingPromptsLog={sentCraftingPromptsLog} receivedCraftingResponsesLog={receivedCraftingResponsesLog} sentNpcAvatarPromptsLog={sentNpcAvatarPromptsLog} currentPageDisplay={currentPageDisplay} totalPages={totalPages} isAutoPlaying={isAutoPlaying} onToggleAutoPlay={onToggleAutoPlay} />}
+      {/* Style Settings Modal (conditionally rendered) */}
       {isStyleSettingsModalOpen && <StyleSettingsModal initialSettings={styleSettings} onSave={(newSettings) => { onUpdateStyleSettings(newSettings); setIsStyleSettingsModalOpen(false); }} onClose={() => setIsStyleSettingsModalOpen(false)} />}
     </div>
   );

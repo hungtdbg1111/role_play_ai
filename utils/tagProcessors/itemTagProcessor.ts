@@ -17,7 +17,6 @@ export const processItemAcquired = (
     const quantity = parseInt(tagParams.quantity || "1", 10);
     const rarity = (tagParams.rarity || GameTemplates.ItemRarity.PHO_THONG) as GameTemplates.EquipmentRarity;
     const value = parseInt(tagParams.value || "0", 10);
-    // ... (extract all other params: slot, statBonusesJSON, uniqueEffectsList, etc.)
 
     if (!itemName || !itemTypeCombined || !itemDescription) {
         console.warn("ITEM_ACQUIRED: Missing name, type, or description.", tagParams);
@@ -34,7 +33,7 @@ export const processItemAcquired = (
     }
 
     let newItem: Item | null = null;
-    const baseItemData: Omit<Item, 'category'> & {category: GameTemplates.ItemCategoryValues} = { // Make category specific for base
+    const baseItemData: Omit<Item, 'category'> & {category: GameTemplates.ItemCategoryValues} = { 
         id: `item-${itemName.replace(/\s+/g, '-')}-${Date.now()}-${Math.random().toString(36).substring(2,7)}`,
         name: itemName,
         description: itemDescription,
@@ -44,8 +43,6 @@ export const processItemAcquired = (
         category: category,
     };
     
-    // Logic for creating specific item types (Equipment, Potion, etc.)
-    // This is a simplified version of the logic in the original performTagProcessing
     switch (category) {
         case GameTemplates.ItemCategory.EQUIPMENT:
             const equipmentType = tagParams.equipmentType as GameTemplates.EquipmentTypeValues || subType as GameTemplates.EquipmentTypeValues;
@@ -56,7 +53,7 @@ export const processItemAcquired = (
             let statBonuses: Partial<PlayerStats> = {};
             try {
                 if (tagParams.statBonusesJSON) statBonuses = JSON.parse(tagParams.statBonusesJSON);
-            } catch (e) { console.warn("Error parsing statBonusesJSON for ITEM_ACQUIRED", e); }
+            } catch (e) { console.warn(`ITEM_ACQUIRED: Could not parse statBonusesJSON for ${itemName}:`, tagParams.statBonusesJSON, e); }
             
             newItem = {
                 ...baseItemData,
@@ -67,7 +64,6 @@ export const processItemAcquired = (
                 uniqueEffects: tagParams.uniqueEffectsList ? tagParams.uniqueEffectsList.split(';').map(s => s.trim()).filter(s => s) : []
             } as GameTemplates.EquipmentTemplate;
             break;
-        // ... (cases for Potion, Material, QuestItem, Miscellaneous)
         case GameTemplates.ItemCategory.POTION:
              const potionType = tagParams.potionType as GameTemplates.PotionTypeValues || subType as GameTemplates.PotionTypeValues;
              if (!potionType || !Object.values(GameTemplates.PotionType).includes(potionType)) {
@@ -84,12 +80,33 @@ export const processItemAcquired = (
                 isConsumedOnUse: true, usable: true, consumable: true,
             } as GameTemplates.PotionTemplate;
             break;
-        // Add other categories here
-        default:
+        case GameTemplates.ItemCategory.MATERIAL:
+            const materialType = tagParams.materialType as GameTemplates.MaterialTypeValues || subType as GameTemplates.MaterialTypeValues;
+            if (!materialType || !Object.values(GameTemplates.MaterialType).includes(materialType)) {
+                console.warn(`ITEM_ACQUIRED: Material item "${itemName}" has invalid/missing materialType: "${materialType}". Skipping.`);
+                break;
+            }
+            newItem = {
+                ...baseItemData,
+                category: GameTemplates.ItemCategory.MATERIAL,
+                materialType: materialType,
+                usable: false,
+                consumable: false,
+            } as GameTemplates.MaterialTemplate;
+            break;
+        default: // Covers QUEST_ITEM, MISCELLANEOUS
              newItem = {
                 ...baseItemData,
-                category: category, // Keep original category if not specifically handled
-             } as Item; // Fallback, might need more specific typing or error
+                category: category, 
+                // Add specific details if needed based on tagParams for these categories
+             } as Item; 
+             if (category === GameTemplates.ItemCategory.QUEST_ITEM && tagParams.questIdAssociated) {
+                 (newItem as GameTemplates.QuestItemTemplate).questIdAssociated = tagParams.questIdAssociated;
+             }
+             if (category === GameTemplates.ItemCategory.MISCELLANEOUS) {
+                 if (tagParams.usable) (newItem as GameTemplates.MiscellaneousItemTemplate).usable = tagParams.usable.toLowerCase() === 'true';
+                 if (tagParams.consumable) (newItem as GameTemplates.MiscellaneousItemTemplate).consumable = tagParams.consumable.toLowerCase() === 'true';
+             }
     }
 
 
@@ -154,7 +171,10 @@ export const processItemUpdate = (
     const newValue = tagParams.newValue;
     const change = tagParams.change;
 
-    if (!itemName || !field) { console.warn("ITEM_UPDATE: Missing item name or field.", tagParams); return { updatedKb: newKb, systemMessages }; }
+    if (!itemName || !field) { 
+        console.warn("ITEM_UPDATE: Missing item name or field.", tagParams); 
+        return { updatedKb: newKb, systemMessages }; 
+    }
     
     const itemIndex = newKb.inventory.findIndex(i => i.name === itemName);
     if (itemIndex > -1) {
@@ -162,7 +182,8 @@ export const processItemUpdate = (
         let updateMessagePart = "";
 
         if (field.startsWith('statBonuses.')) {
-            // ... (logic for statBonuses update) ...
+            // Logic for statBonuses update - TBD if needed or handled by description changes
+            console.warn(`ITEM_UPDATE: Direct update to 'statBonuses' via tag is complex and not fully implemented. Field: ${field}. Consider re-acquiring item with new stats or updating description.`);
         } else { 
             if (newValue !== undefined) {
                  if (typeof itemToUpdate[field] === 'number') itemToUpdate[field] = parseInt(newValue, 10);
@@ -170,12 +191,18 @@ export const processItemUpdate = (
                  else itemToUpdate[field] = newValue;
                  updateMessagePart = `trường ${field} thành "${newValue}"`;
             } else if (change !== undefined && typeof itemToUpdate[field] === 'number') {
-                // ... (logic for numeric change) ...
+                const numChange = parseInt(change, 10);
+                if (!isNaN(numChange)) {
+                    itemToUpdate[field] += numChange;
+                    updateMessagePart = `trường ${field} ${change}`;
+                } else {
+                    console.warn(`ITEM_UPDATE: Invalid numeric change value "${change}" for field "${field}".`);
+                }
             }
         }
         
         if (updateMessagePart) {
-             newKb.playerStats = calculateEffectiveStats(newKb.playerStats, newKb.equippedItems, newKb.inventory);
+             newKb.playerStats = calculateEffectiveStats(newKb.playerStats, newKb.equippedItems, newKb.inventory); // Recalculate if item stats change could affect player
              systemMessages.push({
                 id: 'item-updated-' + itemToUpdate.id, type: 'system',
                 content: `Vật phẩm "${itemName}" đã cập nhật ${updateMessagePart}.`,

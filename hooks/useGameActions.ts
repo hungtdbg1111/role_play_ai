@@ -1,9 +1,9 @@
 
 import { useState, useCallback } from 'react';
-import { KnowledgeBase, GameMessage, WorldSettings, PlayerActionInputType, ResponseLength, GameScreen, RealmBaseStatDefinition, TurnHistoryEntry, FirebaseUser } from '../types';
+import { KnowledgeBase, GameMessage, WorldSettings, PlayerActionInputType, ResponseLength, GameScreen, RealmBaseStatDefinition, TurnHistoryEntry } from '../types';
 import { INITIAL_KNOWLEDGE_BASE, APP_VERSION, DEFAULT_PLAYER_STATS, DEFAULT_TIERED_STATS, TURNS_PER_PAGE, MAX_TURN_HISTORY_LENGTH, AUTO_SAVE_INTERVAL_TURNS, MAX_AUTO_SAVE_SLOTS, VIETNAMESE, SUB_REALM_NAMES } from '../constants';
 import { generateInitialStory, generateNextTurn, summarizeTurnHistory, countTokens, getApiSettings as getGeminiApiSettings } from '../services/geminiService';
-import { performTagProcessing, calculateRealmBaseStats, addTurnHistoryEntry, getMessagesForPage, calculateEffectiveStats } from '../utils/gameLogicUtils';
+import { performTagProcessing, calculateRealmBaseStats, addTurnHistoryEntryRaw, getMessagesForPage, calculateEffectiveStats } from '../utils/gameLogicUtils'; // Changed addTurnHistoryEntry to addTurnHistoryEntryRaw
 
 interface UseGameActionsProps {
   knowledgeBase: KnowledgeBase;
@@ -22,13 +22,13 @@ interface UseGameActionsProps {
   setIsAutoPlaying: React.Dispatch<React.SetStateAction<boolean>>;
   executeSaveGame: (kbToSave: KnowledgeBase, messagesToSave: GameMessage[], saveName: string, existingId: string | null, isAuto: boolean) => Promise<string | null>;
   storageType: string; 
-  firebaseUser: FirebaseUser | null; 
-  logNpcAvatarPromptCallback: (prompt: string) => void; // New callback
+  firebaseUser: null; // FirebaseUser replaced with null
+  logNpcAvatarPromptCallback: (prompt: string) => void; 
 }
 
 export const useGameActions = ({
   knowledgeBase,
-  setKnowledgeBase, // This is the direct setter from useGameData
+  setKnowledgeBase, 
   gameMessages,
   addMessageAndUpdateState,
   setRawAiResponsesLog,
@@ -44,7 +44,7 @@ export const useGameActions = ({
   executeSaveGame,
   storageType,
   firebaseUser,
-  logNpcAvatarPromptCallback, // Destructure new callback
+  logNpcAvatarPromptCallback, 
 }: UseGameActionsProps) => {
   const [isLoadingApi, setIsLoadingApi] = useState<boolean>(false);
   const [apiError, setApiError] = useState<string | null>(null);
@@ -70,7 +70,7 @@ export const useGameActions = ({
     setSummarizationResponsesLog(prev => [response, ...prev].slice(0, 10));
   }, [setSummarizationResponsesLog]);
 
-  const handleSetupComplete = useCallback(async (settings: WorldSettings) => { // Removed playerAvatarDataSource
+  const handleSetupComplete = useCallback(async (settings: WorldSettings, dataForKbPlayerAvatar?: string | null) => { 
     setIsLoadingApi(true);
     setApiError(null);
     
@@ -84,7 +84,6 @@ export const useGameActions = ({
     
     const initialCalculatedStats = calculateRealmBaseStats(initialRealm, realmProgression, generatedBaseStats);
     
-    // Settings already contains playerAvatarUrl (potentially Cloudinary URL from App.tsx wrapper)
     const worldConfigForKb = { ...settings }; 
 
     let minimalInitialKB: KnowledgeBase = {
@@ -96,7 +95,7 @@ export const useGameActions = ({
         sinhLuc: initialCalculatedStats.baseMaxSinhLuc || DEFAULT_PLAYER_STATS.maxSinhLuc,
         linhLuc: initialCalculatedStats.baseMaxLinhLuc || DEFAULT_PLAYER_STATS.maxLinhLuc,
         kinhNghiem: 0,
-        turn: 0, 
+        turn: 0, // Turn is 0 before the first AI response generates turn 1 content
         hieuUngBinhCanh: false,
         activeStatusEffects: [], 
       },
@@ -105,19 +104,25 @@ export const useGameActions = ({
       worldConfig: worldConfigForKb, 
       appVersion: APP_VERSION,
       pageSummaries: {},
-      currentPageHistory: [1], 
+      currentPageHistory: [1], // Initial page starts at turn 1 (after AI gen)
       lastSummarizedTurn: 0,
-      turnHistory: [],
+      turnHistory: [], // Starts empty
       autoSaveTurnCounter: 0,
       currentAutoSaveSlotIndex: 0,
       autoSaveSlotIds: Array(MAX_AUTO_SAVE_SLOTS).fill(null),
       manualSaveId: null,
       manualSaveName: settings.saveGameName || VIETNAMESE.saveGameNamePlaceholder.replace("[Tên Nhân Vật]", settings.playerName || "Tân Đạo Hữu"),
-      // Use the playerAvatarUrl from settings (which could be Cloudinary URL)
-      playerAvatarData: worldConfigForKb.playerAvatarUrl || undefined, 
+      playerAvatarData: dataForKbPlayerAvatar || settings.playerAvatarUrl || undefined, 
     };
     
-    setKnowledgeBase(minimalInitialKB); // Set the main KB state
+    // History entry for "before turn 1" (initial state)
+    minimalInitialKB.turnHistory = addTurnHistoryEntryRaw(
+        [], // No previous history
+        JSON.parse(JSON.stringify(minimalInitialKB)), // Snapshot of the very initial KB
+        []  // No messages before the game starts
+    );
+
+    setKnowledgeBase(minimalInitialKB); 
     setCurrentPageDisplay(1);
     setCurrentScreen(GameScreen.Gameplay); 
 
@@ -126,23 +131,23 @@ export const useGameActions = ({
       setRawAiResponsesLog(prev => [rawText, ...prev].slice(0,50));
       
       let workingKbForProcessing = JSON.parse(JSON.stringify(minimalInitialKB));
-      
+       // The turn for the first AI-generated content is 1.
+      // Tags in initial story should modify this "turn 1" state.
       const { 
         newKb: kbAfterTags, 
-        turnIncrementedByTag, 
+        turnIncrementedByTag, // This should ideally not happen or be handled carefully for turn 1
         systemMessagesFromTags: systemMessagesFromInitialTags, 
         realmChangedByTag: realmChangedByInitTag 
-      } = await performTagProcessing(workingKbForProcessing, response.tags, 1, setKnowledgeBase, logNpcAvatarPromptCallback); // Pass callback
+      } = await performTagProcessing(workingKbForProcessing, response.tags, 1, setKnowledgeBase, logNpcAvatarPromptCallback); 
       
       let finalKbForDisplay = kbAfterTags;
       let turnForInitialMessages = 1;
 
-      if (turnIncrementedByTag && finalKbForDisplay.playerStats.turn > 0) {
-          turnForInitialMessages = finalKbForDisplay.playerStats.turn; 
-      } else {
-          finalKbForDisplay.playerStats.turn = 1; 
-          turnForInitialMessages = 1;
+      // Ensure turn is at least 1 after initial tags.
+      if (finalKbForDisplay.playerStats.turn < 1) {
+          finalKbForDisplay.playerStats.turn = 1;
       }
+      turnForInitialMessages = finalKbForDisplay.playerStats.turn;
       
       if (realmChangedByInitTag) {
           const reCalculatedStats = calculateRealmBaseStats(finalKbForDisplay.playerStats.realm, finalKbForDisplay.realmProgressionList, finalKbForDisplay.currentRealmBaseStats);
@@ -155,9 +160,9 @@ export const useGameActions = ({
           finalKbForDisplay.playerStats.linhLuc = initialCalculatedStats.baseMaxLinhLuc || finalKbForDisplay.playerStats.maxLinhLuc;
       }
       
+      // currentPageHistory should correctly point to the start turn of the first page.
       finalKbForDisplay.currentPageHistory = [turnForInitialMessages];
       finalKbForDisplay.playerStats = calculateEffectiveStats(finalKbForDisplay.playerStats, finalKbForDisplay.equippedItems, finalKbForDisplay.inventory);
-
       
       const newMessages: GameMessage[] = [];
       newMessages.push({
@@ -192,7 +197,7 @@ export const useGameActions = ({
     showNotification,
     setApiError,
     setIsLoadingApi,
-    logNpcAvatarPromptCallback, // Add to dependency array
+    logNpcAvatarPromptCallback, 
   ]);
 
   const handlePlayerAction = useCallback(async (
@@ -204,9 +209,15 @@ export const useGameActions = ({
     setIsLoadingApi(true);
     setApiError(null);
     
-    const turnOfPlayerAction = knowledgeBase.playerStats.turn; 
-    const knowledgeBaseAtActionStart = JSON.parse(JSON.stringify(knowledgeBase)); 
-    const gameMessagesBeforePlayerAction = [...gameMessages];
+    // State AT THE START of this turn's processing cycle
+    const knowledgeBaseAtActionStart = JSON.parse(JSON.stringify(knowledgeBase));
+    const gameMessagesAtActionStart = [...gameMessages];
+    // turnOfPlayerAction is the turn number that is *about to be processed*.
+    // If playerStats.turn is 0 (start of game), this action is for turn 1.
+    // If playerStats.turn is N, this action is for turn N+1.
+    // The AI response and tags will apply to this upcoming turn.
+    const turnOfPlayerAction = knowledgeBase.playerStats.turn + 1;
+
 
     const playerActionMessage: GameMessage = {
       id: Date.now().toString() + Math.random(),
@@ -214,7 +225,7 @@ export const useGameActions = ({
       content: action,
       timestamp: Date.now(),
       isPlayerInput: true,
-      turnNumber: turnOfPlayerAction
+      turnNumber: turnOfPlayerAction // Player action belongs to the turn being processed
     };
     
     const messagesForCurrentPagePrompt = getMessagesForPage(currentPageDisplay, knowledgeBase, [...gameMessages, playerActionMessage]);
@@ -242,7 +253,7 @@ export const useGameActions = ({
 
     try {
         const { response, rawText } = await generateNextTurn(
-            knowledgeBase, 
+            knowledgeBase, // Pass KB at start of turn N
             action,
             inputType,
             responseLength,
@@ -253,7 +264,8 @@ export const useGameActions = ({
         );
         setRawAiResponsesLog(prev => [rawText, ...prev].slice(0,50));
         
-        let currentTurnKb = JSON.parse(JSON.stringify(knowledgeBase));
+        // Start with KB from beginning of turn, then apply changes
+        let currentTurnKb = JSON.parse(JSON.stringify(knowledgeBaseAtActionStart));
 
         const { 
             newKb: kbAfterTags, 
@@ -261,7 +273,7 @@ export const useGameActions = ({
             systemMessagesFromTags, 
             realmChangedByTag, 
             removedBinhCanhViaTag 
-        } = await performTagProcessing(currentTurnKb, response.tags, turnOfPlayerAction, setKnowledgeBase, logNpcAvatarPromptCallback); // Pass callback
+        } = await performTagProcessing(currentTurnKb, response.tags, turnOfPlayerAction, setKnowledgeBase, logNpcAvatarPromptCallback); 
         
         currentTurnKb = kbAfterTags;
         let manualTurnIncrementMessage: GameMessage | null = null;
@@ -270,17 +282,22 @@ export const useGameActions = ({
         const oldRealmBeforeAnyProcessingThisTurn = knowledgeBaseAtActionStart.playerStats.realm; 
         let realmChangedThisTurnProcess = realmChangedByTag; 
 
+        // Ensure playerStats.turn is correctly set to the turn number that was just processed
+        // If tags modified turn, respect it, otherwise increment.
         if (turnIncrementedByTag) {
-            if (currentTurnKb.playerStats.turn <= turnOfPlayerAction) {
-                currentTurnKb.playerStats.turn = turnOfPlayerAction + 1;
-                 manualTurnIncrementMessage = {
+            if (currentTurnKb.playerStats.turn < turnOfPlayerAction) {
+                // This case implies a tag tried to decrement turn or set it too low.
+                // We should ensure it's at least the current turn being processed.
+                currentTurnKb.playerStats.turn = turnOfPlayerAction;
+                manualTurnIncrementMessage = {
                     id: 'manual-fix-turn-' + Date.now(), type: 'system', 
                     content: `Hệ thống: Lượt chơi đã được điều chỉnh thành ${currentTurnKb.playerStats.turn} (do AI tag không hợp lệ).`, 
-                    timestamp: Date.now(), turnNumber: turnOfPlayerAction
+                    timestamp: Date.now(), turnNumber: turnOfPlayerAction 
                 };
             }
         } else {
-            currentTurnKb.playerStats.turn = turnOfPlayerAction + 1;
+            // If no tag modified the turn, this turn's processing (turnOfPlayerAction) is now complete.
+            currentTurnKb.playerStats.turn = turnOfPlayerAction;
         }
         
         const effectsToExpire: string[] = [];
@@ -306,7 +323,6 @@ export const useGameActions = ({
             });
         }
         currentTurnKb.playerStats = calculateEffectiveStats(currentTurnKb.playerStats, currentTurnKb.equippedItems, currentTurnKb.inventory);
-
 
         const realmStringToParseForBottleneck = currentTurnKb.playerStats.realm;
         let mainRealmForBottleneck = "";
@@ -463,8 +479,12 @@ export const useGameActions = ({
         }
         currentTurnKb.playerStats = calculateEffectiveStats(currentTurnKb.playerStats, currentTurnKb.equippedItems, currentTurnKb.inventory);
 
-
-        currentTurnKb = addTurnHistoryEntry(currentTurnKb, gameMessagesBeforePlayerAction);
+        // Add history entry using state AT THE START of this turn's processing
+        currentTurnKb.turnHistory = addTurnHistoryEntryRaw(
+            knowledgeBaseAtActionStart.turnHistory || [], // History from KB at start of this turn
+            knowledgeBaseAtActionStart,                   // Snapshot of KB at start of this turn
+            gameMessagesAtActionStart                     // Snapshot of Msgs at start of this turn
+        );
 
         currentTurnKb.autoSaveTurnCounter = (currentTurnKb.autoSaveTurnCounter + 1);
         if (currentTurnKb.autoSaveTurnCounter >= AUTO_SAVE_INTERVAL_TURNS) {
@@ -472,13 +492,29 @@ export const useGameActions = ({
             const autoSaveSlot = currentTurnKb.currentAutoSaveSlotIndex;
             const autoSaveName = `Auto Save Slot ${autoSaveSlot + 1}`;
             const existingAutoSaveId = currentTurnKb.autoSaveSlotIds[autoSaveSlot];
+            // For auto-save, we save the *final* state of this turn.
             const kbForAutoSave = JSON.parse(JSON.stringify(currentTurnKb));
-            const messagesForAutoSave = [...gameMessagesBeforePlayerAction, playerActionMessage, ...systemMessagesForThisTurn];
+            // Messages for auto-save should include this turn's messages
+            const messagesForAutoSave = [...gameMessagesAtActionStart, playerActionMessage, ...systemMessagesForThisTurn];
+             if (response.narration) {
+                messagesForAutoSave.push({
+                    id: `narration-autosave-${Date.now()}`, type: 'narration', content: response.narration,
+                    timestamp: Date.now(), choices: response.choices, turnNumber: currentTurnKb.playerStats.turn
+                });
+            }
+            if (response.systemMessage) {
+                messagesForAutoSave.push({
+                    id: `sysmsg-autosave-${Date.now()}`, type: 'system', content: response.systemMessage,
+                    timestamp: Date.now(), turnNumber: currentTurnKb.playerStats.turn
+                });
+            }
+
 
             executeSaveGame(kbForAutoSave, messagesForAutoSave, autoSaveName, existingAutoSaveId, true)
                 .then(savedId => {
                     if (savedId) {
-                        setKnowledgeBase(prevKb => { // Use the direct setter here for autosave ID updates
+                        // This needs to update the main KB, not a stale copy.
+                        setKnowledgeBase(prevKb => { 
                             const newKbWithAutoSaveId = JSON.parse(JSON.stringify(prevKb));
                             newKbWithAutoSaveId.autoSaveSlotIds[autoSaveSlot] = savedId;
                             newKbWithAutoSaveId.currentAutoSaveSlotIndex = (autoSaveSlot + 1) % MAX_AUTO_SAVE_SLOTS;
@@ -491,24 +527,24 @@ export const useGameActions = ({
         const newMessagesForThisCycle: GameMessage[] = [playerActionMessage];
         newMessagesForThisCycle.push({
             id: Date.now().toString() + Math.random(), type: 'narration', content: response.narration,
-            timestamp: Date.now(), choices: response.choices, turnNumber: currentTurnKb.playerStats.turn -1 
+            timestamp: Date.now(), choices: response.choices, turnNumber: currentTurnKb.playerStats.turn 
         });
         if (response.systemMessage) {
           newMessagesForThisCycle.push({
             id: Date.now().toString() + Math.random(), type: 'system', content: response.systemMessage,
-            timestamp: Date.now(), turnNumber: currentTurnKb.playerStats.turn -1
+            timestamp: Date.now(), turnNumber: currentTurnKb.playerStats.turn
           });
         }
-        systemMessagesForThisTurn.forEach(msg => msg.turnNumber = currentTurnKb.playerStats.turn -1);
+        systemMessagesForThisTurn.forEach(msg => msg.turnNumber = currentTurnKb.playerStats.turn);
         newMessagesForThisCycle.push(...systemMessagesForThisTurn); 
 
-        if (manualTurnIncrementMessage && !turnIncrementedByTag) { 
-            manualTurnIncrementMessage.turnNumber = currentTurnKb.playerStats.turn -1;
+        if (manualTurnIncrementMessage) { 
+            manualTurnIncrementMessage.turnNumber = currentTurnKb.playerStats.turn;
             newMessagesForThisCycle.push(manualTurnIncrementMessage);
         }
         
         const finalKbStateForThisTurn = currentTurnKb; 
-        const turnCompleted = finalKbStateForThisTurn.playerStats.turn - 1; 
+        const turnCompleted = finalKbStateForThisTurn.playerStats.turn; 
         const shouldSummarizeAndPaginateNow = 
             turnCompleted > 0 &&
             turnCompleted % TURNS_PER_PAGE === 0 &&
@@ -525,7 +561,8 @@ export const useGameActions = ({
                 });
                 const startTurnOfSummaryPageActual = (pageToSummarize - 1) * TURNS_PER_PAGE + 1;
                 const endTurnOfSummaryPageActual = turnCompleted;
-                const allMessagesForSummaryCalc = [...gameMessagesBeforePlayerAction, ...newMessagesForThisCycle];
+                // Messages for summary should be up to and including the current turn's generated messages
+                const allMessagesForSummaryCalc = [...gameMessagesAtActionStart, ...newMessagesForThisCycle];
                 const actualMessagesToSummarize = allMessagesForSummaryCalc.filter(
                     msg => msg.turnNumber >= startTurnOfSummaryPageActual && msg.turnNumber <= endTurnOfSummaryPageActual
                 );
@@ -612,6 +649,10 @@ export const useGameActions = ({
         setApiError(errorMsg);
         showNotification(errorMsg, 'error');
         console.error(err);
+        // Restore KB and messages to the state before this failed action
+        setKnowledgeBase(knowledgeBaseAtActionStart);
+        // setGameMessages(gameMessagesAtActionStart); // No, keep player action message if desired
+        
         if (isAutoPlaying) {
             setIsAutoPlaying(false); 
             showNotification(VIETNAMESE.autoPlayStoppedOnError, 'warning');
@@ -623,7 +664,7 @@ export const useGameActions = ({
       knowledgeBase, gameMessages, currentPageDisplay, addMessageAndUpdateState, setKnowledgeBase,
       logSentPromptCallback, setRawAiResponsesLog, setApiError, showNotification,
       setCurrentPageDisplay, isAutoPlaying, setIsAutoPlaying, executeSaveGame, storageType, firebaseUser,
-      setSummarizationResponsesLog, setIsLoadingApi, logNpcAvatarPromptCallback, // Add to dependency array
+      setSummarizationResponsesLog, setIsLoadingApi, logNpcAvatarPromptCallback, 
     ]);
     
   return {

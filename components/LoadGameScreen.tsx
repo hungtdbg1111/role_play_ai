@@ -1,10 +1,10 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { GameScreen, SaveGameMeta, FirebaseUser, StorageType } from '../types';
+import { GameScreen, SaveGameMeta, StorageType } from '../types';
 import Button from './ui/Button';
 import Spinner from './ui/Spinner';
 import { VIETNAMESE, MAX_AUTO_SAVE_SLOTS } from '../constants';
-import { loadGamesFromFirestore, deleteGameFromFirestore } from '../services/firebaseService';
+// loadGamesFromFirestore, deleteGameFromFirestore removed
 import { loadGamesFromIndexedDB, deleteGameFromIndexedDB } from '../services/indexedDBService';
 
 // Helper function to format bytes
@@ -14,28 +14,26 @@ function formatBytes(bytes: number | undefined, decimals: number = 2): string {
   const dm = decimals < 0 ? 0 : decimals;
   const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  if (i < 0 || i >= sizes.length) return '0 Bytes'; // Handle edge cases like log(negative) or very small numbers
+  if (i < 0 || i >= sizes.length) return '0 Bytes'; // Handle edge cases
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 }
 
 interface LoadGameScreenProps {
   setCurrentScreen: (screen: GameScreen) => void;
-  firebaseUser: FirebaseUser | null; // Nullable if local storage doesn't require auth
-  onLoadGame: (saveId: string) => Promise<void>; // App.tsx handles backend routing
+  onLoadGame: (saveId: string) => Promise<void>; 
   notify: (message: string, type: 'success' | 'error') => void;
-  storageType: StorageType;
+  storageType: StorageType; 
 }
 
 const LoadGameScreen: React.FC<LoadGameScreenProps> = ({ 
   setCurrentScreen, 
-  firebaseUser, 
   onLoadGame, 
   notify,
   storageType 
 }) => {
   const [manualSave, setManualSave] = useState<SaveGameMeta | null>(null);
   const [autoSaves, setAutoSaves] = useState<SaveGameMeta[]>([]);
-  const [otherSaves, setOtherSaves] = useState<SaveGameMeta[]>([]); // For imported or older saves
+  const [otherSaves, setOtherSaves] = useState<SaveGameMeta[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionInProgress, setActionInProgress] = useState<string | null>(null);
@@ -43,27 +41,11 @@ const LoadGameScreen: React.FC<LoadGameScreenProps> = ({
   const fetchSaveGames = useCallback(async () => {
     setIsLoading(true);
     setError(null);
-    // console.log(`[DEBUG_DELETE] fetchSaveGames called. Storage type: ${storageType}`);
     try {
-      let fetchedSaves: SaveGameMeta[] = [];
-      if (storageType === 'cloud') {
-        if (!firebaseUser) {
-          setError(VIETNAMESE.signInRequiredForLoad);
-          notify(VIETNAMESE.signInRequiredForLoad, 'error');
-          setIsLoading(false);
-          setCurrentScreen(GameScreen.Initial); // Redirect if not signed in for cloud
-          return;
-        }
-        // console.log(`[DEBUG_DELETE] Calling loadGamesFromFirestore for user: ${firebaseUser.uid}`);
-        fetchedSaves = await loadGamesFromFirestore(firebaseUser.uid);
-      } else { // 'local'
-        // console.log("[DEBUG_DELETE] Calling loadGamesFromIndexedDB.");
-        fetchedSaves = await loadGamesFromIndexedDB();
-      }
-      // console.log("[DEBUG_DELETE] Fetched saves:", fetchedSaves);
+      // Only IndexedDB logic remains
+      const fetchedSaves = await loadGamesFromIndexedDB();
       
-      // Sort and categorize saves
-      const currentManualSave = fetchedSaves.find(s => !s.name.startsWith("Auto Save Slot") && !s.name.startsWith(VIETNAMESE.importFileButton)); // Simple heuristic
+      const currentManualSave = fetchedSaves.find(s => !s.name.startsWith("Auto Save Slot") && !s.name.startsWith(VIETNAMESE.importFileButton));
       const currentAutoSaves = fetchedSaves.filter(s => s.name.startsWith("Auto Save Slot")).sort((a,b) => {
         const slotA = parseInt(a.name.replace("Auto Save Slot ", ""), 10);
         const slotB = parseInt(b.name.replace("Auto Save Slot ", ""), 10);
@@ -79,14 +61,13 @@ const LoadGameScreen: React.FC<LoadGameScreenProps> = ({
       setOtherSaves(currentOtherSaves);
 
     } catch (e) {
-      // console.error("[DEBUG_DELETE] Error fetching save games:", e);
       const errorMsg = VIETNAMESE.errorLoadingGame + (e instanceof Error ? `: ${e.message}` : '');
       setError(errorMsg);
       notify(errorMsg, 'error');
     } finally {
       setIsLoading(false);
     }
-  }, [firebaseUser, storageType, notify, setCurrentScreen]);
+  }, [notify]); 
 
   useEffect(() => {
     fetchSaveGames();
@@ -95,9 +76,8 @@ const LoadGameScreen: React.FC<LoadGameScreenProps> = ({
   const handleLoad = async (saveId: string) => {
     setActionInProgress(`load-${saveId}`);
     try {
-      await onLoadGame(saveId); // App.tsx handles which backend to use
+      await onLoadGame(saveId); 
     } catch (e) {
-      // console.error(`Error initiating load for game ${saveId}:`, e);
       notify(VIETNAMESE.errorLoadingGame + (e instanceof Error ? `: ${e.message}` : ''), 'error');
     } finally {
       setActionInProgress(null);
@@ -105,35 +85,16 @@ const LoadGameScreen: React.FC<LoadGameScreenProps> = ({
   };
 
   const handleDelete = async (saveId: string, saveName: string) => {
-    // console.log(`[DEBUG_DELETE] handleDelete called. Save ID: ${saveId}, Name: "${saveName}", Storage: ${storageType}`);
-    // console.log("[DEBUG_DELETE] Proceeding with deletion directly (confirm step removed for debug).");
-
     setActionInProgress(`delete-${saveId}`);
     try {
-      if (storageType === 'cloud') {
-        if (!firebaseUser) {
-          notify(VIETNAMESE.signInRequiredForLoad, 'error'); 
-          setActionInProgress(null);
-          // console.log("[DEBUG_DELETE] Deletion aborted: Firebase user not available for cloud storage.");
-          return;
-        }
-        // console.log(`[DEBUG_DELETE] Calling deleteGameFromFirestore for user ${firebaseUser.uid}, saveId ${saveId}`);
-        await deleteGameFromFirestore(firebaseUser.uid, saveId);
-        // console.log(`[DEBUG_DELETE] deleteGameFromFirestore successful for ${saveId}`);
-      } else { // 'local'
-        // console.log(`[DEBUG_DELETE] Calling deleteGameFromIndexedDB for saveId ${saveId}`);
-        await deleteGameFromIndexedDB(saveId);
-        // console.log(`[DEBUG_DELETE] deleteGameFromIndexedDB presumed successful for ${saveId}.`);
-      }
+      // Only IndexedDB logic remains
+      await deleteGameFromIndexedDB(saveId);
       notify(VIETNAMESE.gameDeletedSuccess, 'success');
-      // console.log("[DEBUG_DELETE] Refetching save games after deletion.");
-      fetchSaveGames(); // Refresh the list
+      fetchSaveGames(); 
     } catch (e) {
-      // console.error(`[DEBUG_DELETE] Error during game deletion process for saveId ${saveId}:`, e);
       notify(VIETNAMESE.errorDeletingGame + (e instanceof Error ? `: ${e.message}` : ''), 'error');
     } finally {
       setActionInProgress(null);
-      // console.log(`[DEBUG_DELETE] handleDelete finished for saveId ${saveId}.`);
     }
   };
   
@@ -155,7 +116,7 @@ const LoadGameScreen: React.FC<LoadGameScreenProps> = ({
           )}
         </div>
       </div>
-      <div className="flex space-x-4 flex-shrink-0 mt-3 sm:mt-0 self-center sm:self-auto"> {/* Increased space-x-2 to space-x-4 */}
+      <div className="flex space-x-4 flex-shrink-0 mt-3 sm:mt-0 self-center sm:self-auto">
         <Button 
           variant="primary" 
           size="sm"
@@ -188,7 +149,7 @@ const LoadGameScreen: React.FC<LoadGameScreenProps> = ({
       <div className="w-full max-w-2xl bg-gray-900 shadow-2xl rounded-xl p-6 sm:p-8">
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-sky-500 to-indigo-600">
-            {VIETNAMESE.loadGameScreenTitle} ({storageType === 'local' ? 'Cục Bộ' : 'Đám Mây'})
+            {VIETNAMESE.loadGameScreenTitle} (Cục Bộ)
           </h2>
           <Button variant="ghost" onClick={() => setCurrentScreen(GameScreen.Initial)}>
             {VIETNAMESE.goBackButton}

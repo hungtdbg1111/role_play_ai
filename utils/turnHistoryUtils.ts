@@ -1,39 +1,76 @@
 
-import { KnowledgeBase, GameMessage, TurnHistoryEntry } from '../types';
-import { MAX_TURN_HISTORY_LENGTH } from '../constants';
+import { KnowledgeBase, GameMessage, TurnHistoryEntry, Operation } from '../types';
+import { MAX_TURN_HISTORY_LENGTH, KEYFRAME_INTERVAL } from '../constants';
+import * as jsonpatch from "https://esm.sh/fast-json-patch@3.1.1";
 
-export const addTurnHistoryEntry = (currentKb: KnowledgeBase, messagesBeforeThisTurnActions: GameMessage[]): KnowledgeBase => {
-  // currentKb IS the full KB state for the *end* of the current turn, 
-  // BUT its .turnHistory property is still the history *before* this current turn's entry.
+/**
+ * Adds a new entry to the turn history.
+ * This function is responsible for creating a snapshot of the game state
+ * as it was AT THE START of the turn that just finished processing.
+ * @param existingHistory The array of existing turn history entries.
+ * @param kbSnapshotForCurrentTurnStart The KnowledgeBase state AT THE START of the turn to be recorded.
+ * @param messagesSnapshotForCurrentTurnStart The GameMessage[] state AT THE START of the turn to be recorded.
+ * @returns A new array of TurnHistoryEntry[] with the new entry added and truncated if necessary.
+ */
+export const addTurnHistoryEntryRaw = (
+    existingHistory: TurnHistoryEntry[],
+    kbSnapshotForCurrentTurnStart: KnowledgeBase,    
+    messagesSnapshotForCurrentTurnStart: GameMessage[] 
+): TurnHistoryEntry[] => {
   
-  // 1. Destructure:
-  //    'turnHistory' (local const) = currentKb.turnHistory (i.e., H_n-1, history up to previous turn)
-  //    'kbWithoutNestedHistory' = currentKb with its own .turnHistory property removed.
-  //                              (So, this is effectively KB_n_processed_without_any_turnHistory_field)
-  const { turnHistory, ...kbWithoutNestedHistory } = currentKb;
-  
-  // 2. Create snapshot for the new history entry:
-  //    This snapshot represents the state of KB_n_processed_without_any_turnHistory_field.
-  //    So, knowledgeBaseSnapshotForEntry.turnHistory will be undefined. THIS IS KEY.
-  const knowledgeBaseSnapshotForEntry: KnowledgeBase = JSON.parse(JSON.stringify(kbWithoutNestedHistory));
+  const { turnHistory: nestedHistoryToBeRemoved, ...kbStateCleaned } = kbSnapshotForCurrentTurnStart;
+  const turnNumberOfThisEntry = kbStateCleaned.playerStats.turn;
+
+  let entryType: 'keyframe' | 'delta' = 'keyframe';
+  if (existingHistory.length > 0 && (turnNumberOfThisEntry % KEYFRAME_INTERVAL !== 0) && turnNumberOfThisEntry !==1) {
+    entryType = 'delta';
+  }
+  // First turn (turn 0 if that's how initial setup works, or turn 1 after first AI action) must be a keyframe.
+  // Initial KB.turn is 0, first AI action's turn is 1. So turnNumberOfThisEntry will be 0 for the very first history entry.
+  if (turnNumberOfThisEntry === 0) { // The very first entry before any player/AI interaction.
+      entryType = 'keyframe';
+  }
+
 
   const newHistoryEntry: TurnHistoryEntry = {
-    knowledgeBaseSnapshot: knowledgeBaseSnapshotForEntry, // Snapshot of current turn's state, without nested history.
-    gameMessagesSnapshot: JSON.parse(JSON.stringify(messagesBeforeThisTurnActions)), // Messages just before this turn's action.
+    turnNumber: turnNumberOfThisEntry, 
+    type: entryType,
+    knowledgeBaseSnapshot: JSON.parse(JSON.stringify(kbStateCleaned)), // Always store full snapshot for direct rollback
+    gameMessagesSnapshot: JSON.parse(JSON.stringify(messagesSnapshotForCurrentTurnStart)), // Always store full snapshot
+    knowledgeBaseDelta: undefined,
+    gameMessagesDelta: undefined,
   };
 
-  // 3. Construct the new top-level history array:
-  //    currentActualTurnHistory = H_n-1 (from destructuring)
-  const currentActualTurnHistory = turnHistory || [];
-  //    updatedTurnHistory = H_n = [H_n-1, newHistoryEntry_for_turn_n]
-  const updatedTurnHistory = [...currentActualTurnHistory, newHistoryEntry];
-
-  // 4. Truncate if too long
+  if (entryType === 'delta') {
+    const previousTurnEntry = existingHistory.length > 0 ? existingHistory[existingHistory.length - 1] : undefined;
+    if (previousTurnEntry && previousTurnEntry.knowledgeBaseSnapshot && previousTurnEntry.gameMessagesSnapshot) {
+      try {
+        // Ensure previousTurnEntry.knowledgeBaseSnapshot does not contain its own turnHistory to avoid circular refs in diff
+        const { turnHistory: prevNestedHistory, ...prevKbCleaned } = previousTurnEntry.knowledgeBaseSnapshot;
+        newHistoryEntry.knowledgeBaseDelta = jsonpatch.compare(prevKbCleaned, kbStateCleaned);
+        newHistoryEntry.gameMessagesDelta = jsonpatch.compare(previousTurnEntry.gameMessagesSnapshot, messagesSnapshotForCurrentTurnStart);
+      } catch (diffError) {
+        console.error("Error generating diff, falling back to keyframe:", diffError);
+        newHistoryEntry.type = 'keyframe'; // Fallback to keyframe if diff fails
+        newHistoryEntry.knowledgeBaseDelta = undefined;
+        newHistoryEntry.gameMessagesDelta = undefined;
+      }
+    } else {
+      // If no valid previous snapshot to diff against, force this entry to be a keyframe
+      newHistoryEntry.type = 'keyframe';
+      newHistoryEntry.knowledgeBaseDelta = undefined;
+      newHistoryEntry.gameMessagesDelta = undefined;
+      if(existingHistory.length > 0) { // Only log if it's not the very first entry where this is expected
+         console.warn(`Delta creation skipped for turn ${turnNumberOfThisEntry}: No valid previous snapshot. Forcing keyframe.`);
+      }
+    }
+  }
+  
+  const updatedTurnHistory = [...existingHistory, newHistoryEntry];
+  
   if (updatedTurnHistory.length > MAX_TURN_HISTORY_LENGTH) {
     updatedTurnHistory.splice(0, updatedTurnHistory.length - MAX_TURN_HISTORY_LENGTH);
   }
   
-  // 5. Return the new state:
-  //    This is KB_n_processed, but its .turnHistory property is now H_n.
-  return { ...currentKb, turnHistory: updatedTurnHistory };
+  return updatedTurnHistory;
 };

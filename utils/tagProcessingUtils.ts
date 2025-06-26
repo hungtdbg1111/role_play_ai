@@ -39,7 +39,7 @@ export const performTagProcessing = async (
     tagBatch: string[], 
     turnForSystemMessages: number,
     setKnowledgeBaseDirectly: React.Dispatch<React.SetStateAction<KnowledgeBase>>, 
-    logNpcAvatarPromptCallback?: (prompt: string) => void // New callback
+    logNpcAvatarPromptCallback?: (prompt: string) => void 
 ): Promise<{ 
     newKb: KnowledgeBase;
     turnIncrementedByTag: boolean;
@@ -57,7 +57,7 @@ export const performTagProcessing = async (
     for (const originalTag of tagBatch) { 
         const mainMatch = originalTag.match(/\[(.*?)(?::\s*(.*))?\]$/s);
         if (!mainMatch || !mainMatch[1]) {
-             console.warn("Could not parse tag structure from originalTag:", originalTag);
+             console.warn(`Malformed tag structure: ${originalTag}`);
              allSystemMessages.push({
                  id: 'malformed-tag-structure-' + Date.now(), type: 'system',
                  content: `[DEBUG] Tag có cấu trúc không hợp lệ: ${originalTag}`,
@@ -267,14 +267,17 @@ export const performTagProcessing = async (
                     allSystemMessages.push(...systemMessages);
                     break;
                 }
+                // Tags like 'CHOICE' are not processed here, they are part of the parsed AI response structure.
+                // Tags like 'APPLY_BINH_CANH_EFFECT' are handled by game logic, not direct tag processing modifying KB.
                 default:
-                    const tagNameChars = tagName.split('').map(char => char.charCodeAt(0)).join(',');
-                    console.warn(`Unknown tag: "${tagName}" (Length: ${tagName.length}, Chars: [${tagNameChars}]). Full tag: "${originalTag}" (Cleaned params: "${cleanedTagParameterString}")`);
-                    allSystemMessages.push({
-                         id: 'unknown-tag-' + Date.now(), type: 'system',
-                         content: `[DEBUG] Tag không xác định: "${tagName}". Full tag: "${originalTag}" (Cleaned params: "${cleanedTagParameterString}")`,
-                         timestamp: Date.now(), turnNumber: turnForSystemMessages
-                     });
+                    if (!tagName.startsWith("GENERATED_") && tagName !== "CHOICE") { // Avoid warning for GENERATED tags or CHOICE tags
+                        console.warn(`Unknown tag: "${tagName}". Full tag: "${originalTag}"`);
+                        allSystemMessages.push({
+                             id: 'unknown-tag-' + Date.now(), type: 'system',
+                             content: `[DEBUG] Tag không xác định: "${tagName}". Full tag: "${originalTag}" (Cleaned params: "${cleanedTagParameterString}")`,
+                             timestamp: Date.now(), turnNumber: turnForSystemMessages
+                         });
+                    }
             }
         } catch (error) {
              console.error(`Error processing tag "${tagName}":`, error, "Original tag:", originalTag, "Params:", tagParams);
@@ -291,7 +294,7 @@ export const performTagProcessing = async (
         turnIncrementedByTag: turnIncrementedByAnyTag, 
         systemMessagesFromTags: allSystemMessages, 
         realmChangedByTag: realmChangedByAnyTag, 
-        appliedBinhCanhViaTag: false, 
+        appliedBinhCanhViaTag: false, // This was deprecated, keeping structure
         removedBinhCanhViaTag: removedBinhCanhByAnyTag 
     };
 };

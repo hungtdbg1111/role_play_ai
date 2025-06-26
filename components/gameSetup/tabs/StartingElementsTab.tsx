@@ -1,10 +1,12 @@
 
-import React, { ChangeEvent } from 'react';
+import React, { ChangeEvent, useState } from 'react';
 import { WorldSettings, StartingSkill, StartingItem, StartingNPC, StartingLore, StartingLocation, StartingFaction, PlayerStats } from '../../../types';
 import Button from '../../ui/Button';
 import InputField from '../../ui/InputField';
-import { VIETNAMESE, ALL_FACTION_ALIGNMENTS } from '../../../constants';
+import { VIETNAMESE, ALL_FACTION_ALIGNMENTS, MALE_AVATAR_PLACEHOLDER_URL, FEMALE_AVATAR_BASE_URL, MAX_FEMALE_AVATAR_INDEX } from '../../../constants';
 import * as GameTemplates from '../../../templates';
+import { isValidImageUrl } from '../../../utils/imageValidationUtils';
+import Spinner from '../../ui/Spinner';
 
 interface StartingElementsTabProps {
   settings: WorldSettings;
@@ -75,6 +77,49 @@ const StartingElementsTab: React.FC<StartingElementsTabProps> = ({
   isLocationsSectionOpen, setIsLocationsSectionOpen, handleStartingLocationChange, addStartingLocation, removeStartingLocation,
   isFactionsSectionOpen, setIsFactionsSectionOpen, handleStartingFactionChange, addStartingFaction, removeStartingFaction
 }) => {
+  const [npcAvatarUrlInputs, setNpcAvatarUrlInputs] = useState<Record<number, string>>({});
+  const [npcAvatarUrlValidating, setNpcAvatarUrlValidating] = useState<Record<number, boolean>>({});
+  const [npcAvatarUrlErrors, setNpcAvatarUrlErrors] = useState<Record<number, string | null>>({});
+  const [npcAvatarPreviews, setNpcAvatarPreviews] = useState<Record<number, string | null>>({});
+  const [showNpcSetupAvatarUrlInput, setShowNpcSetupAvatarUrlInput] = useState<Record<number, boolean>>({});
+
+
+  const handleNpcAvatarUrlInputChange = (index: number, url: string) => {
+    setNpcAvatarUrlInputs(prev => ({ ...prev, [index]: url }));
+    setNpcAvatarUrlErrors(prev => ({ ...prev, [index]: null }));
+  };
+
+  const handleNpcAvatarUrlSubmit = async (index: number) => {
+    const url = npcAvatarUrlInputs[index];
+    if (!url || url.trim() === '') {
+      handleStartingNPCChange(index, 'avatarUrl', '');
+      setNpcAvatarPreviews(prev => ({ ...prev, [index]: null }));
+      setShowNpcSetupAvatarUrlInput(prev => ({ ...prev, [index]: false }));
+      return;
+    }
+
+    setNpcAvatarUrlValidating(prev => ({ ...prev, [index]: true }));
+    setNpcAvatarUrlErrors(prev => ({ ...prev, [index]: null }));
+    const isValid = await isValidImageUrl(url);
+    setNpcAvatarUrlValidating(prev => ({ ...prev, [index]: false }));
+
+    if (isValid) {
+      handleStartingNPCChange(index, 'avatarUrl', url);
+      setNpcAvatarPreviews(prev => ({ ...prev, [index]: url }));
+      setShowNpcSetupAvatarUrlInput(prev => ({ ...prev, [index]: false }));
+    } else {
+      setNpcAvatarUrlErrors(prev => ({ ...prev, [index]: VIETNAMESE.avatarUrlInvalid }));
+    }
+  };
+  
+  const getStartingNpcAvatarPreview = (index: number, npc: StartingNPC) => {
+    if (npcAvatarPreviews[index]) return npcAvatarPreviews[index];
+    if (npc.avatarUrl && (npc.avatarUrl.startsWith('http') || npc.avatarUrl.startsWith('data:'))) return npc.avatarUrl;
+    const defaultFemaleAvatar = `${FEMALE_AVATAR_BASE_URL}${Math.floor(Math.random() * MAX_FEMALE_AVATAR_INDEX) + 1}.png`;
+    return npc.gender === 'Nữ' ? defaultFemaleAvatar : MALE_AVATAR_PLACEHOLDER_URL;
+  };
+
+
   return (
     <div className="space-y-2">
       <fieldset className="border border-gray-700 p-0 rounded-md">
@@ -203,6 +248,72 @@ const StartingElementsTab: React.FC<StartingElementsTabProps> = ({
                   />
                 )}
                 <InputField label={VIETNAMESE.npcDetailsLabel} id={`npcDetails-${index}`} value={npc.details} onChange={(e) => handleStartingNPCChange(index, 'details', e.target.value)} textarea rows={2} />
+                
+                <div className="mt-2 space-y-1">
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                             setShowNpcSetupAvatarUrlInput(prev => ({ ...prev, [index]: !prev[index] }));
+                             if (!showNpcSetupAvatarUrlInput[index] && npc.avatarUrl?.startsWith('http')) {
+                                 setNpcAvatarUrlInputs(prev => ({ ...prev, [index]: npc.avatarUrl! }));
+                             } else if (!showNpcSetupAvatarUrlInput[index]) {
+                                 setNpcAvatarUrlInputs(prev => ({ ...prev, [index]: '' }));
+                             }
+                             setNpcAvatarUrlErrors(prev => ({...prev, [index]: null}));
+                        }}
+                        className="w-full text-xs border-cyan-600 hover:bg-cyan-700/50"
+                        aria-expanded={showNpcSetupAvatarUrlInput[index]}
+                    >
+                        {showNpcSetupAvatarUrlInput[index] ? "Đóng URL" : `${VIETNAMESE.avatarUrlInputLabel.replace(":", "")} (NPC ${index + 1})`}
+                    </Button>
+
+                    {showNpcSetupAvatarUrlInput[index] && (
+                         <div className="mt-1 p-2 border border-gray-600 rounded-md bg-gray-800/30">
+                            <InputField
+                                label=""
+                                id={`npcSetupAvatarUrl-${index}`}
+                                value={npcAvatarUrlInputs[index] || ''}
+                                onChange={(e) => handleNpcAvatarUrlInputChange(index, e.target.value)}
+                                placeholder={VIETNAMESE.avatarUrlInputPlaceholder}
+                                disabled={npcAvatarUrlValidating[index]}
+                                className="!mb-1.5"
+                            />
+                            <Button
+                                type="button"
+                                variant="primary"
+                                size="sm"
+                                onClick={() => handleNpcAvatarUrlSubmit(index)}
+                                className="w-full text-xs !py-1"
+                                isLoading={npcAvatarUrlValidating[index]}
+                                disabled={npcAvatarUrlValidating[index] || !(npcAvatarUrlInputs[index] || '').trim()}
+                                loadingText={VIETNAMESE.avatarUrlValidating}
+                            >
+                                {VIETNAMESE.confirmUrlButton}
+                            </Button>
+                            {npcAvatarUrlValidating[index] && <Spinner size="sm" text={VIETNAMESE.avatarUrlValidating} className="mt-1 text-xs" />}
+                            {npcAvatarUrlErrors[index] && <p className="text-xs text-red-400 mt-1">{npcAvatarUrlErrors[index]}</p>}
+                        </div>
+                    )}
+                    {getStartingNpcAvatarPreview(index, npc) && (
+                        <div className="text-center mt-1.5">
+                             <img 
+                                src={getStartingNpcAvatarPreview(index, npc)} 
+                                alt={`Avatar NPC ${npc.name}`} 
+                                className="w-20 h-20 rounded-md object-cover mx-auto border border-gray-600"
+                                onError={(e) => { 
+                                    const target = e.target as HTMLImageElement;
+                                    const defaultFemaleAvatar = `${FEMALE_AVATAR_BASE_URL}${Math.floor(Math.random() * MAX_FEMALE_AVATAR_INDEX) + 1}.png`;
+                                    target.src = npc.gender === 'Nữ' ? defaultFemaleAvatar : MALE_AVATAR_PLACEHOLDER_URL;
+                                    if (npc.avatarUrl && !npc.avatarUrl.startsWith('data:')) {
+                                        setNpcAvatarUrlErrors(prev => ({ ...prev, [index]: VIETNAMESE.avatarUrlInvalid }));
+                                    }
+                                }}
+                             />
+                        </div>
+                    )}
+                </div>
                 <div className="text-right mt-2">
                   <Button variant="danger" size="sm" onClick={() => removeStartingNPC(index)}>{VIETNAMESE.removeNPC}</Button>
                 </div>

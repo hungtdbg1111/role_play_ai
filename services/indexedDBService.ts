@@ -1,9 +1,8 @@
-
-import { SaveGameData, SaveGameMeta, KnowledgeBase, GameMessage } from '../types';
+import { SaveGameData, SaveGameMeta, KnowledgeBase, GameMessage, TurnHistoryEntry } from '../types';
 import { APP_VERSION, VIETNAMESE, MAX_AUTO_SAVE_SLOTS } from '../constants';
 
 const DB_NAME = 'DaoDoAIDB';
-const DB_VERSION = 2; // Incremented version
+const DB_VERSION = 2; 
 const SAVES_STORE_NAME = 'gameSaves_v2'; 
 const LOCAL_USER_ID = 'local_player'; 
 
@@ -12,49 +11,37 @@ let dbPromise: Promise<IDBDatabase> | null = null;
 const getDb = (): Promise<IDBDatabase> => {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
-      // console.log(`[DEBUG_IDB] Opening IndexedDB: ${DB_NAME}, Version: ${DB_VERSION}`);
       const request = indexedDB.open(DB_NAME, DB_VERSION);
 
       request.onerror = () => {
-        // console.error('[DEBUG_IDB] IndexedDB error on open:', request.error);
+        console.error('IndexedDB error on open:', request.error);
         reject('Error opening IndexedDB.');
         dbPromise = null; 
       };
 
       request.onsuccess = () => {
-        // console.log('[DEBUG_IDB] IndexedDB opened successfully.');
         resolve(request.result);
       };
 
       request.onupgradeneeded = (event) => {
-        // console.log(`[DEBUG_IDB] IndexedDB upgrade needed. Old version: ${event.oldVersion}, New version: ${event.newVersion}`);
         const db = (event.target as IDBOpenDBRequest).result;
         const transaction = (event.target as IDBOpenDBRequest).transaction;
 
         if (!db.objectStoreNames.contains(SAVES_STORE_NAME)) {
-          // console.log(`[DEBUG_IDB] Creating object store: ${SAVES_STORE_NAME}`);
           const store = db.createObjectStore(SAVES_STORE_NAME, { keyPath: 'id', autoIncrement: true });
-          // console.log(`[DEBUG_IDB] Creating index 'name_userId' on ${SAVES_STORE_NAME}`);
           store.createIndex('name_userId', ['name', 'userId']);
-          // console.log(`[DEBUG_IDB] Creating index 'userId_timestamp' on ${SAVES_STORE_NAME}`);
           store.createIndex('userId_timestamp', ['userId', 'timestamp']);
         } else {
-          // console.log(`[DEBUG_IDB] Object store ${SAVES_STORE_NAME} already exists. Checking indices.`);
           if (transaction) {
             const store = transaction.objectStore(SAVES_STORE_NAME);
             if (!store.indexNames.contains('name_userId')) {
-              // console.log(`[DEBUG_IDB] Creating index 'name_userId' on existing store ${SAVES_STORE_NAME}`);
               store.createIndex('name_userId', ['name', 'userId']);
             }
              if (!store.indexNames.contains('userId_timestamp')) {
-              // console.log(`[DEBUG_IDB] Creating index 'userId_timestamp' on existing store ${SAVES_STORE_NAME}`);
               store.createIndex('userId_timestamp', ['userId', 'timestamp']);
             }
-          } else {
-            // console.warn("[DEBUG_IDB] onupgradeneeded: transaction is null, cannot check/create indices on existing store if it already existed with an older schema but same name.");
           }
         }
-        // console.log('[DEBUG_IDB] IndexedDB upgrade complete.');
       };
     });
   }
@@ -67,21 +54,62 @@ export const saveGameToIndexedDB = async (
   saveName: string, 
   existingSaveId: string | number | null 
 ): Promise<string> => {
-  // console.log(`[SAVE_DEBUG_DB] saveGameToIndexedDB called. Name: "${saveName}", ExistingID: ${existingSaveId}`);
   const db = await getDb();
   const transaction = db.transaction(SAVES_STORE_NAME, 'readwrite');
   const store = transaction.objectStore(SAVES_STORE_NAME);
 
+  // Deep clone and prepare KnowledgeBase for DB
+  const kbForDb = JSON.parse(JSON.stringify(knowledgeBase)) as KnowledgeBase;
+
+  // Optimize TurnHistory for DB storage
+  if (kbForDb.turnHistory) {
+    kbForDb.turnHistory = kbForDb.turnHistory.map((entry: TurnHistoryEntry) => {
+      if (entry.type === 'delta') {
+        // For delta entries, remove the full snapshots to save space
+        // Keep deltas, turnNumber, type
+        const { knowledgeBaseSnapshot, gameMessagesSnapshot, ...deltaEntryForDb } = entry;
+        return {
+            ...deltaEntryForDb,
+            // Ensure deltas are present, or store empty arrays if somehow undefined
+            knowledgeBaseDelta: entry.knowledgeBaseDelta || [], 
+            gameMessagesDelta: entry.gameMessagesDelta || [],
+        } as unknown as TurnHistoryEntry; // Cast because we are intentionally changing the shape for DB
+      }
+      // Keyframes keep their full snapshots
+      // Ensure deltas are undefined or empty for keyframes to be clean
+      return {
+        ...entry,
+        knowledgeBaseDelta: undefined,
+        gameMessagesDelta: undefined,
+      };
+    });
+  }
+  
+  // Ensure playerAvatarData only stores Cloudinary URL if available from worldConfig
+  if (kbForDb.worldConfig?.playerAvatarUrl && kbForDb.worldConfig.playerAvatarUrl.startsWith('https://res.cloudinary.com')) {
+    kbForDb.playerAvatarData = kbForDb.worldConfig.playerAvatarUrl;
+  } else if (kbForDb.playerAvatarData && !kbForDb.playerAvatarData.startsWith('https://res.cloudinary.com') && !kbForDb.playerAvatarData.startsWith('data:image')) {
+    // If playerAvatarData is neither Cloudinary URL nor base64, clear it if a non-Cloudinary URL is in worldConfig
+    // or if worldConfig has no URL (to avoid saving invalid data)
+    if (kbForDb.worldConfig?.playerAvatarUrl && !kbForDb.worldConfig.playerAvatarUrl.startsWith('https://res.cloudinary.com')){
+         kbForDb.playerAvatarData = undefined; // Clear potentially invalid data
+    } else if (!kbForDb.worldConfig?.playerAvatarUrl) {
+         kbForDb.playerAvatarData = undefined;
+    }
+    // If playerAvatarData is base64 (data:image), it's likely a temporary upload state, don't save it long-term unless no Cloudinary URL.
+    // The app logic should handle converting base64 to Cloudinary URL and updating worldConfig.playerAvatarUrl.
+    // If worldConfig has a cloudinary URL, that takes precedence.
+  }
+
+
   const gameDataToStore: Omit<SaveGameData, 'id'> & { userId: string, id?: string | number } = {
     name: saveName,
     timestamp: new Date(),
-    knowledgeBase: { ...knowledgeBase, appVersion: APP_VERSION },
+    knowledgeBase: { ...kbForDb, appVersion: APP_VERSION }, // Use the modified kbForDb
     gameMessages,
     appVersion: APP_VERSION,
     userId: LOCAL_USER_ID,
   };
-  // console.log("[SAVE_DEBUG_DB] Game data to store:", JSON.stringify(gameDataToStore).substring(0, 500) + "...");
-
 
   let operation: IDBRequest;
   if (existingSaveId !== null && existingSaveId !== undefined) {
@@ -110,30 +138,27 @@ export const saveGameToIndexedDB = async (
 
 
 export const loadGamesFromIndexedDB = async (): Promise<SaveGameMeta[]> => {
-  // console.log("[DEBUG_IDB] loadGamesFromIndexedDB called.");
   const db = await getDb();
   const transaction = db.transaction(SAVES_STORE_NAME, 'readonly');
   const store = transaction.objectStore(SAVES_STORE_NAME);
   const index = store.index('userId_timestamp');
-  // console.log("[DEBUG_IDB] Using index 'userId_timestamp' for loading games.");
 
   const range = IDBKeyRange.bound([LOCAL_USER_ID, new Date(0)], [LOCAL_USER_ID, new Date()]);
-  // console.log("[DEBUG_IDB] Query range for local user:", range);
 
   return new Promise<SaveGameMeta[]>((resolve, reject) => {
     const request = index.getAll(range); 
-    // console.log("[DEBUG_IDB] getAll request initiated from index.");
     
     request.onsuccess = () => {
-      // console.log("[DEBUG_IDB] getAll request successful. Result count:", request.result.length);
       const saves: SaveGameMeta[] = request.result
         .filter(item => item.userId === LOCAL_USER_ID) 
         .map(item => {
           let estimatedSize = 0;
           try {
-            estimatedSize = JSON.stringify(item).length;
+            // Estimate size based on knowledgeBase and gameMessages only for better performance
+            const sizeRelevantData = { kb: item.knowledgeBase, gm: item.gameMessages };
+            estimatedSize = JSON.stringify(sizeRelevantData).length;
           } catch (e) {
-            // console.warn("[DEBUG_IDB] Could not estimate size for IndexedDB item:", item.id, e);
+            // Size estimation error
           }
           return {
             id: item.id.toString(),
@@ -143,154 +168,133 @@ export const loadGamesFromIndexedDB = async (): Promise<SaveGameMeta[]> => {
           };
         })
         .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()); 
-      // console.log("[DEBUG_IDB] Processed and sorted saves:", saves);
       resolve(saves);
     };
     request.onerror = () => {
-      // console.error('[DEBUG_IDB] Error loading games from IndexedDB:', request.error);
+      console.error('Error loading games from IndexedDB:', request.error);
       reject(new Error(`Failed to load local games. Details: ${request.error?.message || 'Unknown error'}`));
     };
   });
 };
 
 export const loadSpecificGameFromIndexedDB = async (saveId: string): Promise<SaveGameData | null> => {
-  // console.log(`[DEBUG_IDB] loadSpecificGameFromIndexedDB called. SaveID: ${saveId}`);
   const db = await getDb();
   const transaction = db.transaction(SAVES_STORE_NAME, 'readonly');
   const store = transaction.objectStore(SAVES_STORE_NAME);
   
   const numericId = parseInt(saveId, 10);
-  if (isNaN(numericId) && typeof saveId === 'string') {
-      // console.warn("[DEBUG_IDB] loadSpecificGameFromIndexedDB: saveId is a non-numeric string, using as string key.", saveId);
-  }
 
   return new Promise<SaveGameData | null>((resolve, reject) => {
     const keyToLoad = isNaN(numericId) ? saveId : numericId;
-    // console.log(`[DEBUG_IDB] Attempting to get game with key: ${JSON.stringify(keyToLoad)}`);
     const request = store.get(keyToLoad);
 
     request.onsuccess = () => {
-      // console.log(`[DEBUG_IDB] Get request successful for key ${keyToLoad}. Result:`, request.result);
       if (request.result && request.result.userId === LOCAL_USER_ID) {
         const data = request.result as SaveGameData;
+        
+        // Ensure turnHistory entries are valid, even if delta snapshots are missing (they will be reconstructed later)
+        if (data.knowledgeBase && data.knowledgeBase.turnHistory) {
+          data.knowledgeBase.turnHistory = data.knowledgeBase.turnHistory.map(entry => ({
+            ...entry,
+            // Deltas are expected to have deltas and no snapshots from DB
+            knowledgeBaseDelta: entry.type === 'delta' ? (entry.knowledgeBaseDelta || []) : undefined,
+            gameMessagesDelta: entry.type === 'delta' ? (entry.gameMessagesDelta || []) : undefined,
+            // Keyframes are expected to have snapshots and no deltas from DB
+            knowledgeBaseSnapshot: entry.type === 'keyframe' ? entry.knowledgeBaseSnapshot : ({} as KnowledgeBase), // Placeholder if missing, will be reconstructed
+            gameMessagesSnapshot: entry.type === 'keyframe' ? entry.gameMessagesSnapshot : [], // Placeholder
+          }));
+        }
+
         resolve({
             ...data,
             id: data.id?.toString(), 
             timestamp: new Date(data.timestamp) 
         });
       } else if (request.result) { 
-        // console.warn(`[DEBUG_IDB] Game found with key ${keyToLoad} but userId mismatch. Found: "${request.result.userId}", Expected: "${LOCAL_USER_ID}"`);
         resolve(null); 
       }
       else { 
-        // console.log(`[DEBUG_IDB] No game found for key ${keyToLoad}.`);
         resolve(null);
       }
     };
     request.onerror = () => {
-      // console.error(`[DEBUG_IDB] Error loading specific game (key: ${keyToLoad}) from IndexedDB:`, request.error);
+      console.error(`Error loading specific game (key: ${keyToLoad}) from IndexedDB:`, request.error);
       reject(new Error(`Failed to load specific local game. Details: ${request.error?.message || 'Unknown error'}`));
     };
   });
 };
 
 export const deleteGameFromIndexedDB = async (saveId: string): Promise<void> => {
-  // console.log(`[DEBUG_DELETE_IDB] deleteGameFromIndexedDB called. SaveID: ${saveId}`);
   const db = await getDb();
   const transaction = db.transaction(SAVES_STORE_NAME, 'readwrite');
   const store = transaction.objectStore(SAVES_STORE_NAME);
   
   const numericId = parseInt(saveId, 10);
   const keyToDelete = isNaN(numericId) ? saveId : numericId;
-  // console.log(`[DEBUG_DELETE_IDB] Determined key to delete: ${JSON.stringify(keyToDelete)} (original saveId: "${saveId}")`);
 
   return new Promise<void>((resolve, reject) => {
-    // console.log(`[DEBUG_DELETE_IDB] Attempting to get record with key: ${keyToDelete} before deletion.`);
     const getRequest = store.get(keyToDelete); 
     
     getRequest.onsuccess = () => {
-      // console.log(`[DEBUG_DELETE_IDB] getRequest.onsuccess. Result for key ${keyToDelete}:`, getRequest.result);
       if (getRequest.result) { 
         if (getRequest.result.userId === LOCAL_USER_ID) { 
-          // console.log(`[DEBUG_DELETE_IDB] Record found and userId matches. Proceeding with delete operation for key: ${keyToDelete}`);
           const deleteRequest = store.delete(keyToDelete);
           deleteRequest.onsuccess = () => {
-            // console.log(`[DEBUG_DELETE_IDB] deleteRequest.onsuccess for key: ${keyToDelete}. Deletion successful.`);
             resolve();
           };
           deleteRequest.onerror = () => {
             const errorMsg = `Failed to delete local game data. Details: ${deleteRequest.error?.message || 'Unknown IndexedDB error'}`;
-            // console.error(`[DEBUG_DELETE_IDB] deleteRequest.onerror for key ${keyToDelete}:`, deleteRequest.error);
+            console.error(`Error deleting from IndexedDB:`, deleteRequest.error);
             reject(new Error(errorMsg));
           };
         } else { 
-          const errorMsg = `Attempted to delete a game save (key: ${keyToDelete}) not belonging to the local user. Expected user: "${LOCAL_USER_ID}", found: "${getRequest.result.userId}".`;
-          // console.warn(`[DEBUG_DELETE_IDB] ${errorMsg}`);
+          const errorMsg = `Attempted to delete a game save (key: ${keyToDelete}) not belonging to the local user.`;
           reject(new Error(errorMsg));
         }
       } else { 
-        const errorMsg = `Game save not found for key: ${keyToDelete}. Cannot delete. This might indicate the key was already deleted or never existed.`;
-        // console.warn(`[DEBUG_DELETE_IDB] ${errorMsg}`);
+        const errorMsg = `Game save not found for key: ${keyToDelete}. Cannot delete.`;
         reject(new Error(errorMsg));
       }
     };
     
     getRequest.onerror = () => {
       const errorMsg = `Failed to check local game (key: ${keyToDelete}) before deletion. Details: ${getRequest.error?.message || 'Unknown IndexedDB error'}`;
-      // console.error(`[DEBUG_DELETE_IDB] getRequest.onerror for key ${keyToDelete}:`, getRequest.error);
+      console.error(`Error getting record before delete:`, getRequest.error);
       reject(new Error(errorMsg));
     };
   });
 };
 
 export const importGameToIndexedDB = async (
-  gameDataToImport: Omit<SaveGameData, 'id' | 'timestamp'>
+  gameDataToImport: Omit<SaveGameData, 'id' | 'timestamp'> & { name: string } // Ensure name is present
 ): Promise<string> => {
-  // console.log("[DEBUG_IDB] importGameToIndexedDB called.");
   const db = await getDb();
   
   const existingSaves = await loadGamesFromIndexedDB();
   const existingNames = existingSaves.map(s => s.name);
 
-  const baseName = gameDataToImport.name || 'Game đã nhập';
-  let finalSaveName = baseName;
+  let finalSaveName = gameDataToImport.name;
   let counter = 1;
+  // Ensure unique name for imported save
   while (existingNames.includes(finalSaveName)) {
-    finalSaveName = `${baseName} (${counter})`;
+    finalSaveName = `${gameDataToImport.name} (${counter})`;
     counter++;
   }
-  // console.log(`[DEBUG_IDB] Importing game. Base name: "${baseName}", Final unique name: "${finalSaveName}"`);
 
-  const transaction = db.transaction(SAVES_STORE_NAME, 'readwrite');
-  const store = transaction.objectStore(SAVES_STORE_NAME);
-
-  const gameData: Omit<SaveGameData, 'id'> & { userId: string } = {
-    name: finalSaveName, 
-    timestamp: new Date(), 
-    knowledgeBase: { ...gameDataToImport.knowledgeBase, appVersion: APP_VERSION },
-    gameMessages: gameDataToImport.gameMessages,
-    appVersion: gameDataToImport.appVersion || APP_VERSION,
-    userId: LOCAL_USER_ID,
-  };
-  // console.log("[DEBUG_IDB] Data prepared for import with unique name:", gameData);
-
-  return new Promise<string>((resolve, reject) => {
-    const request = store.add(gameData); 
-    // console.log("[DEBUG_IDB] Add request initiated for import.");
-    request.onsuccess = () => {
-      // console.log("[DEBUG_IDB] Import to IndexedDB successful. Resulting key:", request.result);
-      resolve(request.result.toString());
-    };
-    request.onerror = () => {
-      const errorMsg = `Failed to import game locally. Details: ${request.error?.message || 'Unknown error'}`;
-      // console.error('[DEBUG_IDB] Error importing game to IndexedDB:', request.error);
-      reject(new Error(errorMsg));
-    };
-  });
+  // The saveGameToIndexedDB function will handle the delta optimization logic.
+  // The gameDataToImport should have full snapshots if it came from a standard JSON export.
+  // If it came from an optimized (gzipped) export, its delta entries might already lack full snapshots.
+  // saveGameToIndexedDB is designed to handle this: it derives deltas if snapshots are present and type is 'delta',
+  // or preserves existing deltas if snapshots are missing but deltas are present.
+  return saveGameToIndexedDB(
+    gameDataToImport.knowledgeBase,
+    gameDataToImport.gameMessages,
+    finalSaveName,
+    null // Always create as new save on import
+  );
 };
 
 
 export const resetDBConnection = () => {
-  // console.log("[DEBUG_IDB] Resetting IndexedDB connection promise.");
   dbPromise = null;
 };

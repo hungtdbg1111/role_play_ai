@@ -1,9 +1,8 @@
-
 import React, { useState, useCallback, ChangeEvent, useRef, useEffect } from 'react';
 import { GameScreen, WorldSettings, StartingSkill, StartingItem, StartingNPC, StartingLore, StartingLocation, StartingFaction, PlayerStats, GenreType } from '../types'; 
 import Button from './ui/Button';
 import Modal from './ui/Modal';
-import { VIETNAMESE, DEFAULT_WORLD_SETTINGS, CUSTOM_GENRE_VALUE, MAX_TOKENS_FANFIC } from '../constants';
+import { VIETNAMESE, DEFAULT_WORLD_SETTINGS, CUSTOM_GENRE_VALUE, MAX_TOKENS_FANFIC, DEFAULT_VIOLENCE_LEVEL, DEFAULT_STORY_TONE, DEFAULT_NSFW_DESCRIPTION_STYLE } from '../constants';
 import { generateWorldDetailsFromStory, generateFanfictionWorldDetails, countTokens } from '../services/geminiService';
 import * as GameTemplates from '../templates';
 
@@ -44,6 +43,10 @@ const GameSetupScreen = ({ setCurrentScreen, onSetupComplete }: GameSetupScreenP
     heThongCanhGioi: DEFAULT_WORLD_SETTINGS.heThongCanhGioi,
     canhGioiKhoiDau: DEFAULT_WORLD_SETTINGS.canhGioiKhoiDau,
     playerAvatarUrl: DEFAULT_WORLD_SETTINGS.playerAvatarUrl,
+    nsfwMode: DEFAULT_WORLD_SETTINGS.nsfwMode || false,
+    nsfwDescriptionStyle: DEFAULT_WORLD_SETTINGS.nsfwDescriptionStyle || DEFAULT_NSFW_DESCRIPTION_STYLE,
+    violenceLevel: DEFAULT_WORLD_SETTINGS.violenceLevel || DEFAULT_VIOLENCE_LEVEL,
+    storyTone: DEFAULT_WORLD_SETTINGS.storyTone || DEFAULT_STORY_TONE,
   });
 
   const [activeTab, setActiveTab] = useState<SetupTab>('aiAssist');
@@ -55,14 +58,14 @@ const GameSetupScreen = ({ setCurrentScreen, onSetupComplete }: GameSetupScreenP
 
   // State related to AI Assist Tab
   const [storyIdea, setStoryIdea] = useState('');
-  const [isOriginalStoryIdeaNsfw, setIsOriginalStoryIdeaNsfw] = useState(false);
+  // isOriginalStoryIdeaNsfw removed, use settings.nsfwMode
   const [fanficSourceType, setFanficSourceType] = useState<'name' | 'file'>('name');
   const [fanficStoryName, setFanficStoryName] = useState('');
   const [fanficFile, setFanficFile] = useState<File | null>(null);
   const [fanficFileContent, setFanficFileContent] = useState<string | null>(null);
   const [fanficTokenCount, setFanficTokenCount] = useState<number | null>(null);
   const [fanficPlayerDescription, setFanficPlayerDescription] = useState('');
-  const [isFanficIdeaNsfw, setIsFanficIdeaNsfw] = useState(false);
+  // isFanficIdeaNsfw removed, use settings.nsfwMode
   const [originalStorySummary, setOriginalStorySummary] = useState<string>(settings.originalStorySummary || '');
   const [showOriginalStorySummaryInput, setShowOriginalStorySummaryInput] = useState<boolean>(!!settings.originalStorySummary);
   const fanficFileInputRef = useRef<HTMLInputElement>(null);
@@ -87,19 +90,41 @@ const GameSetupScreen = ({ setCurrentScreen, onSetupComplete }: GameSetupScreenP
   const [isLocationsSectionOpen, setIsLocationsSectionOpen] = useState(false);
   const [isFactionsSectionOpen, setIsFactionsSectionOpen] = useState(false);
 
-  // Effect to sync playerAvatarUrl from settings to preview if it's a URL and not 'uploaded_via_file'
-  // This is mainly for when settings are imported.
+
+  // Effect 1: When raw avatar data changes (e.g., user uploads, AI generates base64, user types URL that is passed via onPlayerAvatarDataChange in CharacterStoryTab)
+  // This data is the "source of truth" for the current user interaction for preview.
   useEffect(() => {
-    if (settings.playerAvatarUrl && settings.playerAvatarUrl !== 'uploaded_via_file') {
-      setPlayerAvatarPreviewUrl(settings.playerAvatarUrl);
-      setPlayerUploadedAvatarData(null); // Ensure this is cleared if we're using a URL
-    } else if (!settings.playerAvatarUrl) {
-      // If playerAvatarUrl is cleared in settings (e.g. by removeAvatar in tab), clear preview and data
+    if (playerUploadedAvatarData && (playerUploadedAvatarData.startsWith('http') || playerUploadedAvatarData.startsWith('data:'))) {
+      setPlayerAvatarPreviewUrl(playerUploadedAvatarData);
+    } else if (!playerUploadedAvatarData) {
       setPlayerAvatarPreviewUrl(null);
-      setPlayerUploadedAvatarData(null);
     }
-    // If settings.playerAvatarUrl is 'uploaded_via_file', the preview is managed by CharacterStoryTab via playerUploadedAvatarData
-  }, [settings.playerAvatarUrl]);
+    // If playerUploadedAvatarData is some placeholder like "uploaded_via_file", this effect won't set a preview from it.
+    // The preview would only be set if actual base64 or URL data is in playerUploadedAvatarData.
+  }, [playerUploadedAvatarData]);
+
+  // Effect 2: When settings.playerAvatarUrl changes (e.g., due to import, or AI assist directly modifying settings)
+  // This needs to synchronize playerUploadedAvatarData and playerAvatarPreviewUrl
+  useEffect(() => {
+    if (settings.playerAvatarUrl) {
+      if (settings.playerAvatarUrl.startsWith('http') || settings.playerAvatarUrl.startsWith('data:')) {
+        // If settings.playerAvatarUrl is a direct URL/Data URI, it becomes the source of truth
+        setPlayerUploadedAvatarData(settings.playerAvatarUrl);
+        // playerAvatarPreviewUrl will be updated by Effect 1 reacting to playerUploadedAvatarData change.
+      } else if (settings.playerAvatarUrl === 'uploaded_via_file' || settings.playerAvatarUrl === 'upload_pending_after_ai_gen_cloudinary_fail') {
+        // These are placeholders. It means the actual data *should* be in playerUploadedAvatarData if the state is consistent
+        // from a previous user action or save/load that preserves playerUploadedAvatarData.
+        // If playerUploadedAvatarData is NOT already set with base64 for these placeholders, clear the preview.
+        if (!playerUploadedAvatarData || !playerUploadedAvatarData.startsWith('data:')) {
+           setPlayerAvatarPreviewUrl(null); 
+        } else {
+           setPlayerAvatarPreviewUrl(playerUploadedAvatarData); // Ensure preview shows if base64 is there
+        }
+      }
+    } else { // settings.playerAvatarUrl is undefined/null/empty
+      setPlayerUploadedAvatarData(null); // This will trigger Effect 1 to clear playerAvatarPreviewUrl
+    }
+  }, [settings.playerAvatarUrl]); // Removed playerUploadedAvatarData from deps here to prevent potential loops.
 
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -252,7 +277,17 @@ const GameSetupScreen = ({ setCurrentScreen, onSetupComplete }: GameSetupScreenP
     if (!storyIdea.trim()) { setGeneratorMessage({ text: 'Vui lòng nhập ý tưởng cốt truyện.', type: 'error' }); return; }
     setIsGeneratingDetails(true); setGeneratorMessage(null); setRawApiResponseText(null); setSentWorldGenPrompt(null);
     try {
-      const {response, rawText, constructedPrompt} = await generateWorldDetailsFromStory(storyIdea, isOriginalStoryIdeaNsfw, settings.genre, settings.isCultivationEnabled, settings.genre === CUSTOM_GENRE_VALUE ? settings.customGenreName : undefined, (prompt) => setGeneratorMessage({ text: `Đang gửi prompt (dài ${prompt.length} ký tự)...`, type: 'info'}) );
+      const {response, rawText, constructedPrompt} = await generateWorldDetailsFromStory(
+        storyIdea, 
+        settings.nsfwMode || false, 
+        settings.genre, 
+        settings.isCultivationEnabled,
+        settings.violenceLevel || DEFAULT_VIOLENCE_LEVEL,
+        settings.storyTone || DEFAULT_STORY_TONE,
+        settings.genre === CUSTOM_GENRE_VALUE ? settings.customGenreName : undefined,
+        settings.nsfwDescriptionStyle || DEFAULT_NSFW_DESCRIPTION_STYLE,
+        (prompt) => setGeneratorMessage({ text: `Đang gửi prompt (dài ${prompt.length} ký tự)...`, type: 'info'}) 
+      );
       setRawApiResponseText(rawText); setSentWorldGenPrompt(constructedPrompt);
 
       const validatedStartingItems = response.startingItems.map(item => {
@@ -276,9 +311,15 @@ const GameSetupScreen = ({ setCurrentScreen, onSetupComplete }: GameSetupScreenP
         startingLocations: response.startingLocations && response.startingLocations.length > 0 ? response.startingLocations : prev.startingLocations, startingFactions: response.startingFactions && response.startingFactions.length > 0 ? response.startingFactions : prev.startingFactions,
         heThongCanhGioi: settings.isCultivationEnabled && response.heThongCanhGioi ? response.heThongCanhGioi : (settings.isCultivationEnabled ? prev.heThongCanhGioi : VIETNAMESE.noCultivationSystem), canhGioiKhoiDau: settings.isCultivationEnabled && response.canhGioiKhoiDau ? response.canhGioiKhoiDau : (settings.isCultivationEnabled ? prev.canhGioiKhoiDau : VIETNAMESE.mortalRealmName),
         genre: response.genre || prev.genre, customGenreName: response.genre === CUSTOM_GENRE_VALUE && response.customGenreName ? response.customGenreName : (response.genre === CUSTOM_GENRE_VALUE ? prev.customGenreName : ""), isCultivationEnabled: response.isCultivationEnabled !== undefined ? response.isCultivationEnabled : prev.isCultivationEnabled,
+        nsfwDescriptionStyle: settings.nsfwMode && response.nsfwDescriptionStyle ? response.nsfwDescriptionStyle : prev.nsfwDescriptionStyle,
+        violenceLevel: settings.nsfwMode && response.violenceLevel ? response.violenceLevel : prev.violenceLevel,
+        storyTone: settings.nsfwMode && response.storyTone ? response.storyTone : prev.storyTone,
         // playerAvatarUrl is NOT set from AI response here anymore
       }));
-      // No longer setting playerAvatarPreviewUrl from response.playerAvatarUrl here
+      // If AI provided an avatar URL, set it to playerUploadedAvatarData for preview and App.tsx processing
+      if (response.playerAvatarUrl && response.playerAvatarUrl.startsWith('http')) {
+        setPlayerUploadedAvatarData(response.playerAvatarUrl);
+      }
       setGeneratorMessage({ text: VIETNAMESE.worldDetailsGeneratedSuccess, type: 'success' });
     } catch (e) { const errorMsg = e instanceof Error ? e.message : String(e); setGeneratorMessage({ text: `${VIETNAMESE.errorGeneratingWorldDetails} ${errorMsg}`, type: 'error' });
     } finally { setIsGeneratingDetails(false); }
@@ -311,7 +352,19 @@ const GameSetupScreen = ({ setCurrentScreen, onSetupComplete }: GameSetupScreenP
     }
     setIsGeneratingFanficDetails(true); setGeneratorMessage(null); setRawApiResponseText(null); setSentWorldGenPrompt(null);
     try {
-      const {response, rawText, constructedPrompt} = await generateFanfictionWorldDetails(sourceMaterialContent, isContentProvided, fanficPlayerDescription, isFanficIdeaNsfw, settings.genre, settings.isCultivationEnabled, settings.genre === CUSTOM_GENRE_VALUE ? settings.customGenreName : undefined, (prompt) => setGeneratorMessage({ text: `Đang gửi prompt (dài ${prompt.length} ký tự)...`, type: 'info'}));
+      const {response, rawText, constructedPrompt} = await generateFanfictionWorldDetails(
+        sourceMaterialContent, 
+        isContentProvided, 
+        fanficPlayerDescription, 
+        settings.nsfwMode || false, 
+        settings.genre, 
+        settings.isCultivationEnabled,
+        settings.violenceLevel || DEFAULT_VIOLENCE_LEVEL,
+        settings.storyTone || DEFAULT_STORY_TONE,
+        settings.genre === CUSTOM_GENRE_VALUE ? settings.customGenreName : undefined, 
+        settings.nsfwDescriptionStyle || DEFAULT_NSFW_DESCRIPTION_STYLE,
+        (prompt) => setGeneratorMessage({ text: `Đang gửi prompt (dài ${prompt.length} ký tự)...`, type: 'info'})
+      );
       setRawApiResponseText(rawText); setSentWorldGenPrompt(constructedPrompt);
 
       const validatedStartingItems = response.startingItems.map(item => {
@@ -336,9 +389,15 @@ const GameSetupScreen = ({ setCurrentScreen, onSetupComplete }: GameSetupScreenP
         originalStorySummary: response.originalStorySummary || prev.originalStorySummary,
         heThongCanhGioi: settings.isCultivationEnabled && response.heThongCanhGioi ? response.heThongCanhGioi : (settings.isCultivationEnabled ? prev.heThongCanhGioi : VIETNAMESE.noCultivationSystem), canhGioiKhoiDau: settings.isCultivationEnabled && response.canhGioiKhoiDau ? response.canhGioiKhoiDau : (settings.isCultivationEnabled ? prev.canhGioiKhoiDau : VIETNAMESE.mortalRealmName),
         genre: response.genre || prev.genre, customGenreName: response.genre === CUSTOM_GENRE_VALUE && response.customGenreName ? response.customGenreName : (response.genre === CUSTOM_GENRE_VALUE ? prev.customGenreName : ""), isCultivationEnabled: response.isCultivationEnabled !== undefined ? response.isCultivationEnabled : prev.isCultivationEnabled,
+        nsfwDescriptionStyle: settings.nsfwMode && response.nsfwDescriptionStyle ? response.nsfwDescriptionStyle : prev.nsfwDescriptionStyle,
+        violenceLevel: settings.nsfwMode && response.violenceLevel ? response.violenceLevel : prev.violenceLevel,
+        storyTone: settings.nsfwMode && response.storyTone ? response.storyTone : prev.storyTone,
         // playerAvatarUrl is NOT set from AI response here anymore
       }));
-       // No longer setting playerAvatarPreviewUrl from response.playerAvatarUrl here
+      // If AI provided an avatar URL, set it to playerUploadedAvatarData for preview and App.tsx processing
+      if (response.playerAvatarUrl && response.playerAvatarUrl.startsWith('http')) {
+        setPlayerUploadedAvatarData(response.playerAvatarUrl);
+      }
       if (response.originalStorySummary) { setOriginalStorySummary(response.originalStorySummary); setShowOriginalStorySummaryInput(true); }
       setGeneratorMessage({ text: VIETNAMESE.fanficDetailsGeneratedSuccess, type: 'success' });
     } catch (e) { const errorMsg = e instanceof Error ? e.message : String(e); setGeneratorMessage({ text: `${VIETNAMESE.errorGeneratingFanficDetails} ${errorMsg}`, type: 'error' });
@@ -356,15 +415,33 @@ const GameSetupScreen = ({ setCurrentScreen, onSetupComplete }: GameSetupScreenP
     if (!finalSettings.isCultivationEnabled) { finalSettings.heThongCanhGioi = ""; finalSettings.canhGioiKhoiDau = ""; }
     if (finalSettings.genre !== CUSTOM_GENRE_VALUE) finalSettings.customGenreName = "";
     
-    // Ensure playerAvatarUrl in settings reflects the chosen avatar
+    // Ensure playerAvatarUrl in settings reflects the chosen avatar data source
+    // playerUploadedAvatarData holds the actual data (base64 or URL)
+    // settings.playerAvatarUrl is more like a state descriptor for how it was set
     if (playerUploadedAvatarData) {
-        finalSettings.playerAvatarUrl = "uploaded_via_file";
-    } else if (playerAvatarPreviewUrl) { // A random URL was chosen
-        finalSettings.playerAvatarUrl = playerAvatarPreviewUrl;
-    } else { // No avatar selected
+      if (playerUploadedAvatarData.startsWith('data:')) {
+        finalSettings.playerAvatarUrl = "uploaded_via_file"; // Or the specific AI gen fail state if that's in playerUploadedAvatarData
+      } else if (playerUploadedAvatarData.startsWith('http')) {
+        finalSettings.playerAvatarUrl = playerUploadedAvatarData;
+      } else {
+        // This case handles placeholders like 'upload_pending_after_ai_gen_cloudinary_fail'
+        // if it somehow ended up in playerUploadedAvatarData. Or if playerUploadedAvatarData is not a recognized format.
+        // We need to ensure finalSettings.playerAvatarUrl reflects the correct state description.
+        // If playerUploadedAvatarData is 'upload_pending_after_ai_gen_cloudinary_fail', then finalSettings.playerAvatarUrl should be too.
+        // If playerUploadedAvatarData is 'uploaded_via_file' (e.g., from CharacterStoryTab handleChange), then that's fine.
+        // For now, let's be explicit:
+        if (settings.playerAvatarUrl === 'upload_pending_after_ai_gen_cloudinary_fail') {
+             finalSettings.playerAvatarUrl = 'upload_pending_after_ai_gen_cloudinary_fail';
+        } else if (settings.playerAvatarUrl === 'uploaded_via_file') {
+             finalSettings.playerAvatarUrl = 'uploaded_via_file';
+        } else {
+             finalSettings.playerAvatarUrl = undefined; // If unsure, clear it
+        }
+      }
+    } else { // No playerUploadedAvatarData
         finalSettings.playerAvatarUrl = undefined;
     }
-    
+
     onSetupComplete(finalSettings, playerUploadedAvatarData); 
   };
 
@@ -396,23 +473,16 @@ const GameSetupScreen = ({ setCurrentScreen, onSetupComplete }: GameSetupScreenP
               startingLore: importedSettings.startingLore || [], 
               startingLocations: importedSettings.startingLocations || [], 
               startingFactions: importedSettings.startingFactions || [], 
-              playerAvatarUrl: importedSettings.playerAvatarUrl // Load avatar URL
+              playerAvatarUrl: importedSettings.playerAvatarUrl, // This will trigger useEffect to update preview/data
+              nsfwMode: importedSettings.nsfwMode || false,
+              nsfwDescriptionStyle: importedSettings.nsfwDescriptionStyle || DEFAULT_NSFW_DESCRIPTION_STYLE,
+              violenceLevel: importedSettings.violenceLevel || DEFAULT_VIOLENCE_LEVEL,
+              storyTone: importedSettings.storyTone || DEFAULT_STORY_TONE,
             });
             setOriginalStorySummary(importedSettings.originalStorySummary || ''); 
             setShowOriginalStorySummaryInput(!!importedSettings.originalStorySummary);
-            // If imported settings have a playerAvatarUrl, set the preview
-            if (importedSettings.playerAvatarUrl && importedSettings.playerAvatarUrl !== "uploaded_via_file") {
-              setPlayerAvatarPreviewUrl(importedSettings.playerAvatarUrl);
-              setPlayerUploadedAvatarData(null);
-            } else {
-              // If it was an uploaded avatar, we can't restore base64 from JSON this way.
-              // The user would need to re-upload if they want to change it.
-              // Or, App.tsx load logic would restore playerAvatarData to KnowledgeBase and GameSetupScreen
-              // would need to be able to receive this initial playerAvatarData to set its preview.
-              // For now, clear it on import if it's 'uploaded_via_file' unless actual data is also loaded.
-              setPlayerAvatarPreviewUrl(null);
-              setPlayerUploadedAvatarData(null);
-            }
+            // The useEffect hook that depends on settings.playerAvatarUrl will handle updating
+            // playerAvatarPreviewUrl and playerUploadedAvatarData.
             setGeneratorMessage({ text: VIETNAMESE.worldSettingsImportedSuccess, type: 'success' }); 
             setActiveTab('worldSettings'); 
           } else setGeneratorMessage({ text: VIETNAMESE.invalidWorldSettingsFile, type: 'error' });
@@ -460,16 +530,17 @@ const GameSetupScreen = ({ setCurrentScreen, onSetupComplete }: GameSetupScreenP
         <div className="max-h-[calc(100vh-320px)] overflow-y-auto custom-scrollbar pr-2 pb-4 -mr-2">
           {activeTab === 'aiAssist' && (
             <AIAssistTab
-              settings={settings}
+              settings={settings} // Pass full settings
+              handleChange={handleChange} // Pass handleChange for nsfwMode and other settings
               storyIdea={storyIdea} setStoryIdea={setStoryIdea}
-              isOriginalStoryIdeaNsfw={isOriginalStoryIdeaNsfw} setIsOriginalStoryIdeaNsfw={setIsOriginalStoryIdeaNsfw}
+              // isOriginalStoryIdeaNsfw and setIsOriginalStoryIdeaNsfw are removed
               handleGenerateFromStoryIdea={handleGenerateFromStoryIdea} isGeneratingDetails={isGeneratingDetails}
               fanficSourceType={fanficSourceType} setFanficSourceType={setFanficSourceType}
               fanficStoryName={fanficStoryName} setFanficStoryName={setFanficStoryName}
               fanficFile={fanficFile} handleFanficFileChange={handleFanficFileChange}
               fanficTokenCount={fanficTokenCount} isLoadingTokens={isLoadingTokens}
               fanficPlayerDescription={fanficPlayerDescription} setFanficPlayerDescription={setFanficPlayerDescription}
-              isFanficIdeaNsfw={isFanficIdeaNsfw} setIsFanficIdeaNsfw={setIsFanficIdeaNsfw}
+              // isFanficIdeaNsfw and setIsFanficIdeaNsfw are removed
               handleGenerateFromFanfic={handleGenerateFromFanfic} isGeneratingFanficDetails={isGeneratingFanficDetails}
               originalStorySummary={originalStorySummary} handleOriginalStorySummaryChange={handleOriginalStorySummaryChange}
               showOriginalStorySummaryInput={showOriginalStorySummaryInput} setShowOriginalStorySummaryInput={setShowOriginalStorySummaryInput}
@@ -480,9 +551,9 @@ const GameSetupScreen = ({ setCurrentScreen, onSetupComplete }: GameSetupScreenP
             <CharacterStoryTab
               settings={settings}
               handleChange={handleChange}
-              playerAvatarPreviewUrl={playerAvatarPreviewUrl}
-              setPlayerAvatarPreviewUrl={setPlayerAvatarPreviewUrl}
-              onPlayerAvatarDataChange={setPlayerUploadedAvatarData}
+              playerAvatarPreviewUrl={playerAvatarPreviewUrl} // Pass down for preview
+              setPlayerAvatarPreviewUrl={setPlayerAvatarPreviewUrl} // Allow CharacterStoryTab to update preview
+              onPlayerAvatarDataChange={setPlayerUploadedAvatarData} // Allow CharacterStoryTab to set the raw data
             />
           )}
           {activeTab === 'worldSettings' && (

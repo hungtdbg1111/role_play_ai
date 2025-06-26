@@ -37,6 +37,8 @@ export const processCompanionAdd = (
             content: `${name} đã gia nhập đội của bạn!`,
             timestamp: Date.now(), turnNumber: newKb.playerStats.turn 
         });
+    } else {
+        console.warn(`COMPANION_ADD: Companion "${name}" already exists. Not adding duplicate.`);
     }
     return { updatedKb: newKb, systemMessages };
 };
@@ -82,13 +84,14 @@ export const processCompanionStatsUpdate = (
     }
     const companion = newKb.companions.find(c => c.name === name);
     if (companion) {
-        // Logic to update companion stats based on tagParams (hp, mana, atk changes)
         let updateOccurred = false;
         if (tagParams.hp) {
             const change = parseInt(tagParams.hp, 10);
             if (!isNaN(change)) {
                 companion.hp = Math.max(0, Math.min(companion.hp + change, companion.maxHp));
                 updateOccurred = true;
+            } else {
+                console.warn(`COMPANION_STATS_UPDATE: Invalid HP change value "${tagParams.hp}" for companion "${name}".`);
             }
         }
          if (tagParams.mana) {
@@ -96,6 +99,8 @@ export const processCompanionStatsUpdate = (
             if (!isNaN(change)) {
                 companion.mana = Math.max(0, Math.min(companion.mana + change, companion.maxMana));
                 updateOccurred = true;
+            } else {
+                console.warn(`COMPANION_STATS_UPDATE: Invalid Mana change value "${tagParams.mana}" for companion "${name}".`);
             }
         }
         if (tagParams.atk) {
@@ -103,6 +108,8 @@ export const processCompanionStatsUpdate = (
             if (!isNaN(change)) {
                 companion.atk = Math.max(0, companion.atk + change);
                 updateOccurred = true;
+            } else {
+                console.warn(`COMPANION_STATS_UPDATE: Invalid ATK change value "${tagParams.atk}" for companion "${name}".`);
             }
         }
         if(updateOccurred){

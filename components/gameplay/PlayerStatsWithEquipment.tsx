@@ -1,9 +1,10 @@
 
-import React, { useState } from 'react'; 
+import React, { useState, ChangeEvent, useRef } from 'react'; 
 import { PlayerStats, Item, EquipmentSlotId, KnowledgeBase, StatusEffect } from '../../../types';
 import { VIETNAMESE, FEMALE_AVATAR_BASE_URL, MAX_FEMALE_AVATAR_INDEX, MALE_AVATAR_PLACEHOLDER_URL } from '../../../constants';
 import * as GameTemplates from '../../../templates';
 import Modal from '../../ui/Modal'; 
+import Button from '../../ui/Button'; // Import Button for avatar change
 
 interface PlayerStatsWithEquipmentProps {
   playerStats: PlayerStats; 
@@ -15,6 +16,9 @@ interface PlayerStatsWithEquipmentProps {
   playerAvatarUrl?: string; 
   playerAvatarData?: string; 
   worldConfig?: KnowledgeBase['worldConfig']; 
+  isPlayerContext?: boolean; // To conditionally show player-specific controls
+  onPlayerAvatarUploadRequest?: (base64Data: string) => void; // Callback for player avatar upload
+  isUploadingPlayerAvatar?: boolean; // Loading state for player avatar
 }
 
 const PlayerStatsWithEquipment: React.FC<PlayerStatsWithEquipmentProps> = ({
@@ -27,9 +31,13 @@ const PlayerStatsWithEquipment: React.FC<PlayerStatsWithEquipmentProps> = ({
   playerAvatarUrl, // This is worldConfig.playerAvatarUrl
   playerAvatarData, // This is knowledgeBase.playerAvatarData
   worldConfig,
+  isPlayerContext,
+  onPlayerAvatarUploadRequest,
+  isUploadingPlayerAvatar,
 }) => {
   const [selectedStatusEffect, setSelectedStatusEffect] = useState<StatusEffect | null>(null);
   const isCultivationEnabled = worldConfig?.isCultivationEnabled !== undefined ? worldConfig.isCultivationEnabled : true;
+  const playerAvatarFileInputRef = useRef<HTMLInputElement>(null);
   
   const getBonusForStat = (statKey: keyof Omit<PlayerStats, 'realm' | 'currency' | 'isInCombat' | 'turn' | 'hieuUngBinhCanh' | 'sinhLuc' | 'linhLuc' | 'kinhNghiem' | 'activeStatusEffects' >): number => {
     let totalBonus = 0;
@@ -106,41 +114,75 @@ const PlayerStatsWithEquipment: React.FC<PlayerStatsWithEquipmentProps> = ({
   };
 
   const getPlayerAvatarSrc = () => {
-    // Priority 1: playerAvatarData if it's a full Cloudinary/web URL (most up-to-date)
-    if (playerAvatarData && (playerAvatarData.startsWith('http://') || playerAvatarData.startsWith('https://'))) {
+    if (playerAvatarData && (playerAvatarData.startsWith('http://') || playerAvatarData.startsWith('https://') || playerAvatarData.startsWith('data:image'))) {
       return playerAvatarData;
     }
-    // Priority 2: playerAvatarUrl (from worldConfig) if it's a full Cloudinary/web URL
     if (playerAvatarUrl && playerAvatarUrl !== 'uploaded_via_file' && (playerAvatarUrl.startsWith('http://') || playerAvatarUrl.startsWith('https://'))) {
       return playerAvatarUrl;
     }
-    // Priority 3: playerAvatarData if it's a base64 string (for temporary display or if Cloudinary failed)
-    if (playerAvatarData && playerAvatarData.startsWith('data:image')) {
-      return playerAvatarData;
-    }
-    // Fallback to gender-based placeholder
     const defaultFemaleAvatar = `${FEMALE_AVATAR_BASE_URL}${Math.floor(Math.random() * MAX_FEMALE_AVATAR_INDEX) + 1}.png`;
     return playerGender === 'Nữ' ? defaultFemaleAvatar : MALE_AVATAR_PLACEHOLDER_URL;
+  };
+
+  const handlePlayerAvatarFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file && onPlayerAvatarUploadRequest) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result as string;
+        onPlayerAvatarUploadRequest(base64String);
+      };
+      reader.readAsDataURL(file);
+      if (playerAvatarFileInputRef.current) { // Reset file input
+          playerAvatarFileInputRef.current.value = "";
+      }
+    }
   };
 
 
   return (
     <>
     <div className="bg-gray-800 p-3 sm:p-4 rounded-lg shadow-md border border-gray-700">
-      <div className="flex items-center mb-3 border-b border-gray-700 pb-2">
+      <div className="flex items-start mb-3 border-b border-gray-700 pb-2">
         <img 
             src={getPlayerAvatarSrc()} 
             alt={VIETNAMESE.playerAvatarLabel} 
             className="w-16 h-16 sm:w-20 sm:h-20 rounded-full object-cover border-2 border-indigo-500 shadow-md mr-3 sm:mr-4"
         />
-        <h3 className="text-lg font-semibold text-indigo-400 flex-grow">
-          <span>{VIETNAMESE.playerStatsSection}</span>
-          {isCultivationEnabled && playerStats.hieuUngBinhCanh && (
-            <span className="block text-xs font-bold text-red-400 bg-red-900/50 px-2 py-0.5 rounded-full border border-red-600 animate-pulse mt-1">
-              {VIETNAMESE.bottleneckEffectLabel}
-            </span>
-          )}
-        </h3>
+        <div className="flex-grow">
+            <h3 className="text-lg font-semibold text-indigo-400">
+            <span>{VIETNAMESE.playerStatsSection}</span>
+            {isCultivationEnabled && playerStats.hieuUngBinhCanh && (
+                <span className="block text-xs font-bold text-red-400 bg-red-900/50 px-2 py-0.5 rounded-full border border-red-600 animate-pulse mt-1">
+                {VIETNAMESE.bottleneckEffectLabel}
+                </span>
+            )}
+            </h3>
+            {isPlayerContext && (
+              <div className="mt-1">
+                <input
+                  type="file"
+                  ref={playerAvatarFileInputRef}
+                  onChange={handlePlayerAvatarFileChange}
+                  accept="image/png, image/jpeg, image/webp, image/gif"
+                  className="hidden"
+                  id="player-avatar-upload-input"
+                  disabled={isUploadingPlayerAvatar}
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => playerAvatarFileInputRef.current?.click()}
+                  className="text-xs !py-1 !px-2 border-indigo-500 hover:bg-indigo-700/50"
+                  isLoading={isUploadingPlayerAvatar}
+                  loadingText={VIETNAMESE.uploadingAvatarMessage}
+                  disabled={isUploadingPlayerAvatar}
+                >
+                  {VIETNAMESE.changeAvatarButtonLabel}
+                </Button>
+              </div>
+            )}
+        </div>
       </div>
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-0.5">
